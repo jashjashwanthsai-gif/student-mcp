@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<div class="max-w-sm mx-auto mt-10 rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 shadow-xl shadow-black/20">
+  <h2 class="text-xl font-bold tracking-tight text-white mb-6">Log in</h2>
+  <form method="post" action="/login">
+    <label class="font-tech block text-xs uppercase tracking-wider text-zinc-500 mb-2">Email</label>
+    <input type="email" name="email" required
+      class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 transition">
+
+    <label class="font-tech block text-xs uppercase tracking-wider text-zinc-500 mb-2 mt-5">Password</label>
+    <input type="password" name="password" required
+      class="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 transition">
+
+    {% if error %}<p class="text-red-400 text-sm mt-3">{{ error }}</p>{% endif %}
+
+    <button type="submit"
+      class="w-full mt-6 inline-flex items-center justify-center px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-gradient-to-b from-emerald-400 to-emerald-600 ring-1 ring-white/20 shadow-lg shadow-emerald-500/10 hover:opacity-90 active:scale-[0.98] transition">
+      Log in
+    </button>
+  </form>
+  <p class="text-sm text-zinc-500 mt-5">No account yet? <a href="/signup" class="text-emerald-400 hover:text-emerald-300">Sign up</a></p>
+</div>
+{% endblock %}

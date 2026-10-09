@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+students/*/raw/
+students/*/chroma/
+students/*/profile.json
+students/*/bio.txt
+students/*/progress_log.jsonl
+!students/.gitkeep
+webapp/app.db

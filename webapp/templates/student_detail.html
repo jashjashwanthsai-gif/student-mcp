@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ student.name }}{% endblock %}
+{% block content %}
+{% set pill_classes = {
+  'ready': 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  'processing': 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  'created': 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
+  'error': 'bg-red-500/10 text-red-400 border-red-500/20',
+} %}
+
+<p class="mt-4 mb-6"><a href="/" class="text-sm text-zinc-500 hover:text-zinc-300 transition">&larr; Back to dashboard</a></p>
+
+<div class="rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 shadow-xl shadow-black/20">
+  <div class="flex items-center gap-3 mb-1">
+    <h2 class="text-xl font-bold tracking-tight text-white">{{ student.name }}</h2>
+    <span class="font-tech inline-flex items-center px-2.5 py-1 rounded-full text-[11px] uppercase tracking-wider border {{ pill_classes.get(student.status, pill_classes['created']) }}">{{ student.status }}</span>
+  </div>
+  {% if student.status_message %}<p class="text-sm text-zinc-500 mb-2">{{ student.status_message }}</p>{% endif %}
+
+  <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-8 mb-3">1. About this student</h3>
+  <form method="post" action="/students/{{ student.id }}/bio">
+    <textarea name="bio" placeholder="Grade, interests/hobbies (used for teaching analogies), any known learning differences, anything a tutor should know."
+      class="w-full min-h-[120px] bg-black/30 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/30 transition">{{ bio_text }}</textarea>
+    <button type="submit"
+      class="mt-4 inline-flex items-center justify-center px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-gradient-to-b from-emerald-400 to-emerald-600 ring-1 ring-white/20 shadow-lg shadow-emerald-500/10 hover:opacity-90 active:scale-[0.98] transition">
+      Save
+    </button>
+  </form>
+
+  <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-10 mb-3">2. Upload marks + notes</h3>
+  <form method="post" action="/students/{{ student.id }}/upload" enctype="multipart/form-data">
+    <label class="block text-sm text-zinc-400 mb-2">Marks CSV (subject, score, max_score, term) and/or notes (.txt or .md) - multiple allowed</label>
+    <input type="file" name="files" multiple required accept=".csv,.txt,.md"
+      class="w-full text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border file:border-white/10 file:bg-white/5 file:text-zinc-200 file:text-sm file:font-medium hover:file:bg-white/10 file:transition">
+    <button type="submit"
+      class="mt-4 inline-flex items-center justify-center px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-gradient-to-b from-emerald-400 to-emerald-600 ring-1 ring-white/20 shadow-lg shadow-emerald-500/10 hover:opacity-90 active:scale-[0.98] transition">
+      Upload &amp; build profile
+    </button>
+  </form>
+  <p class="text-sm text-zinc-500 mt-3">Re-uploading rebuilds the learner profile and replaces the previous notes/history for this student.</p>
+
+  <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-10 mb-3">3. Connect</h3>
+  {% if student.status == "ready" %}
+    <p class="text-sm text-zinc-400 mb-3">Paste this URL into Claude, ChatGPT, or any MCP-compatible client as a remote MCP server. From the next message onward, the AI knows this student's level and teaches at their pace:</p>
+  {% else %}
+    <p class="text-sm text-zinc-500 mb-3">The MCP link will work once processing finishes, but here it is already if you want to connect early:</p>
+  {% endif %}
+  <code class="font-tech block w-full px-4 py-3 rounded-lg bg-black/40 border border-white/10 text-emerald-300 text-xs break-all">{{ mcp_url }}</code>
+
+  <h3 class="font-tech text-xs uppercase tracking-wider text-red-400/80 mt-10 mb-3">Danger zone</h3>
+  <form method="post" action="/students/{{ student.id }}/delete" onsubmit="return confirm('Delete this student and all their data permanently?');">
+    <button type="submit"
+      class="inline-flex items-center justify-center px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-red-600/90 hover:bg-red-600 ring-1 ring-white/10 transition">
+      Delete student
+    </button>
+  </form>
+</div>
+{% endblock %}
