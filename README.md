@@ -28,7 +28,7 @@ just renamed:
   topic actually improving, or did it regress after apparent progress?" -
   `fractions: struggling -> practicing -> struggling` is a materially
   different (and more useful) signal than just "struggling with fractions."
-  Semantic similarity search (Chroma) is still used, but only for what it's
+  Semantic similarity search (Qdrant) is still used, but only for what it's
   actually good at: recalling relevant free-text notes/history, not for
   tracking mastery trends over time.
 
@@ -36,14 +36,21 @@ just renamed:
 
 ```powershell
 uv sync
-copy .env.example .env   # then edit .env: set ANTHROPIC_API_KEY and WEBAPP_SECRET_KEY
+copy .env.example .env   # then fill in the values below
 ```
 
 (Git Bash: `cp .env.example .env`)
 
-`WEBAPP_SECRET_KEY` signs session cookies - any random string for local dev;
-use a real secret (`python -c "import secrets; print(secrets.token_hex(32))"`)
-before exposing this beyond your own machine.
+Required in `.env`:
+- `WEBAPP_SECRET_KEY` - signs session cookies. Generate with
+  `python -c "import secrets; print(secrets.token_hex(32))"`
+- `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` - from your Supabase project's
+  Settings > API. Run `webapp/supabase_schema.sql` once in the Supabase SQL
+  Editor before first use - this backend can't create tables via the data API.
+- `QDRANT_URL` / `QDRANT_API_KEY` - from your Qdrant Cloud cluster.
+- `ANTHROPIC_API_KEY` - unlike a pure-retrieval design, `ask_tutor` generates
+  the tutoring reply server-side and profile extraction also calls Anthropic,
+  so this is required for the web platform too, not just local testing.
 
 ## Run the platform
 
@@ -59,10 +66,10 @@ Open `http://127.0.0.1:8000`, sign up, and:
    sheet alone won't capture.
 3. **Upload data** - a marks CSV (see format below) and/or plain `.txt`/`.md`
    notes (teacher remarks, syllabus excerpts). This triggers background
-   processing: parsing marks → chunking + embedding notes into a local
-   per-student vector store → one Anthropic call to build the learner
-   profile. The page shows live status (`processing` → `ready`, or `error`
-   with a reason).
+   processing: parsing marks → chunking + embedding notes into a per-student
+   Qdrant collection → one Anthropic call to build the learner profile,
+   stored on the student's Supabase row. The page shows live status
+   (`processing` → `ready`, or `error` with a reason).
 4. **Connect** - once ready, copy the MCP URL shown on the student's page
    (`http://<host>/mcp/<token>`) into Claude Desktop, Claude.ai, ChatGPT, or
    any other MCP client's remote-server settings.
@@ -142,42 +149,54 @@ records.
 ```
 webapp/            FastAPI app: signup/login, student dashboard, upload
   main.py            routes + mounts the MCP app at /mcp/{token}
-  db.py              SQLAlchemy models: User, Student (metadata + token only)
+  db.py              Supabase-backed User/Student (accounts + metadata + token)
+                      and the progress_log table (mastery trend)
   auth.py            password hashing, session cookies
   processing.py      background ingestion job (runs student_adaptive_mcp.ingest)
   mcp_multi.py        multi-tenant FastMCP app - resolves student per-request
                       from the {token} path segment via get_http_request()
+  supabase_schema.sql  run once in the Supabase SQL Editor
   templates/          server-rendered Jinja2 pages
 
 student_adaptive_mcp/  Core library, tenant-agnostic (takes a student_id string)
   report_parser.py    marks CSV parsing + per-subject summarization
   chunking.py          paragraph-based notes chunking
-  storage.py            Chroma vector store (local, per-student collection) -
+  storage.py            Qdrant vector store, fastembed local embeddings -
                         used for semantic recall of notes/history only
-  progress.py            structured, append-only per-topic mastery log - the
-                        trend/pattern tracking that `storage.py` is NOT used
-                        for (see "not a voice twin" above)
-  profile.py             one-time LLM learner-profile extraction
+  progress.py            ProgressEntry + pure trend/gaps/recurring-error
+                        functions over a list of entries (`*_from_entries`),
+                        the trend/pattern tracking that `storage.py` is NOT
+                        used for (see "not a voice twin" above). The local
+                        single-tenant flow backs these with a JSONL file; the
+                        webapp backs them with the progress_log table.
+  profile.py             one-time LLM learner-profile extraction + dict
+                        round-trip (profile_to_dict/profile_from_dict) for
+                        Supabase's jsonb column
   prompts.py              prompt construction (profile extraction + tutor)
   ingest.py               CLI + the function the webapp calls in the background
   server.py               single-tenant stdio MCP server (see below)
 
-students/<id>/      Per-student data: raw/, chroma/, progress_log.jsonl,
-                    profile.json, bio.txt
-webapp/app.db       SQLite: accounts + student metadata/tokens (gitignored)
+Supabase            users, students (metadata, bio, profile, mcp_token),
+                    progress_log (one row per update_learning_progress call)
+Qdrant              one collection per student_id - notes/history memory
 ```
 
 The one piece of infrastructure worth understanding: a single FastMCP app is
 mounted at `/mcp/{token}` and shared by every student. Each tool call reads
 the `token` path segment off the live request (`get_http_request().path_params`),
-looks up which student it belongs to, and loads that student's data fresh -
-there's no per-tenant process, just per-request resolution.
+looks up which student it belongs to in Supabase, fetches its progress rows,
+and loads its Qdrant collection fresh - there's no per-tenant process, just
+per-request resolution. Nothing durable lives on local disk; uploaded raw
+files are transient, used only for the one ingestion run that processes them.
 
 ## Local single-tenant testing (no web app)
 
-For quick local experiments without running the web server. `sample_data/`
-has a ready-made example (`alex_marks.csv` + `alex_notes.txt`) - copy both
-into `students/Alex/raw/` to try the flow immediately:
+For quick local experiments without running the web server, the original
+CLI + stdio MCP server still work - they share the same Qdrant backend as the
+web app (so still need `QDRANT_URL`/`QDRANT_API_KEY`), but keep the bio,
+learner profile, and progress log as local files instead of Supabase rows.
+`sample_data/` has a ready-made example (`alex_marks.csv` + `alex_notes.txt`)
+- copy both into `students/Alex/raw/` to try the flow immediately:
 
 ```powershell
 uv run python -m student_adaptive_mcp.ingest --student "Aria"
@@ -190,8 +209,24 @@ Flags for `ingest`:
 
 Set `STUDENT_NAME` in your environment before running the stdio server. See
 `student_adaptive_mcp/server.py`'s docstring for Claude Desktop registration.
-This path is independent of the web platform's database - it keys storage
-directly off whatever name you pass to `--student`.
+This path is independent of the web platform's Supabase accounts - it keys
+storage directly off whatever name you pass to `--student`.
+
+## Deploy to Render
+
+No `render.yaml` here - it's a manual dashboard flow:
+
+1. Push this repo to GitHub, then in Render: **New > Web Service**, connect
+   the repo.
+2. Build command: `uv sync`. Start command:
+   `uv run uvicorn webapp.main:app --host 0.0.0.0 --port $PORT`.
+3. Add the env vars from Setup above (`WEBAPP_SECRET_KEY`, `SUPABASE_URL`,
+   `SUPABASE_SERVICE_ROLE_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`,
+   `ANTHROPIC_API_KEY`) in the service's Environment settings - use a real
+   `WEBAPP_SECRET_KEY`, not the insecure dev default.
+4. Deploy. Since nothing durable lives on local disk anymore, a redeploy or a
+   free-tier spin-down doesn't lose any student data - it's all in Supabase/
+   Qdrant.
 
 ## Known limitations (MVP)
 
@@ -204,12 +239,13 @@ directly off whatever name you pass to `--student`.
   across all students and users.
 - Session-end progress capture depends on the host model honoring the
   server's instructions, not a guaranteed lifecycle hook.
-- `profile.json` is a one-shot snapshot from ingestion; it only updates by
-  re-uploading/re-running ingestion. Day-to-day progress lives in
-  `progress_log.jsonl` + the Chroma store via `update_learning_progress`/
+- The stored learner profile is a one-shot snapshot from ingestion; it only
+  updates by re-uploading/re-running ingestion. Day-to-day progress lives in
+  the `progress_log` table + the Qdrant store via `update_learning_progress`/
   `remember`/`save_session_summary`, and `get_knowledge_gaps`/
   `get_learning_trajectory` merge both - but the baseline profile itself
   doesn't silently rewrite itself from those updates.
 - Not deployed anywhere yet - runs locally via `uvicorn`. Deploying needs a
   real `WEBAPP_SECRET_KEY`, HTTPS (most MCP clients require it for remote
-  servers), and a persistent disk for `students/` and `webapp/app.db`.
+  servers), and your own Supabase project + Qdrant cluster (see Setup and
+  Deploy to Render above) - no persistent local disk is needed anymore.

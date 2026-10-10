@@ -1,68 +1,182 @@
-"""SQLAlchemy models + session for user accounts and student metadata.
+"""Supabase-backed storage for user accounts, student metadata, and the
+progress log.
 
-This DB holds accounts and student metadata/tokens only. The learner profile
-and recallable notes/progress live in the per-student Chroma store + profile
-JSON under students/<student_id>/ (see student_adaptive_mcp.storage/profile) -
-kept separate so that store never needs to know about users/auth at all.
+Notes/history vector memory lives in Qdrant (see student_adaptive_mcp.storage)
+- this module holds accounts, student identity/status, bio text, the learner
+profile JSON, and the structured per-topic progress log. None of it lives in
+local files or a local DB anymore, which is what lets this survive a Render
+redeploy or free-tier spin-down.
 """
 
 import os
-import uuid
-from datetime import datetime, timezone
+import secrets
+from dataclasses import dataclass
 
-from sqlalchemy import DateTime, ForeignKey, String, create_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+from supabase import Client, create_client
 
-from student_adaptive_mcp.config import REPO_ROOT
+from student_adaptive_mcp.progress import ProgressEntry
 
-DB_PATH = os.environ.get("STUDENT_MCP_DB_PATH", str(REPO_ROOT / "webapp" / "app.db"))
-engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+_client: Client | None = None
 
 
-def _uuid() -> str:
-    return uuid.uuid4().hex
+def _get_client() -> Client:
+    global _client
+    if _client is None:
+        _client = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+    return _client
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+@dataclass
+class User:
+    id: str
+    email: str
+    password_hash: str
+    created_at: str | None = None
 
 
-class Base(DeclarativeBase):
-    pass
+@dataclass
+class Student:
+    id: str
+    owner_id: str
+    name: str
+    mcp_token: str
+    status: str = "created"
+    status_message: str = ""
+    bio_text: str = ""
+    profile: dict | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
-class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    email: Mapped[str] = mapped_column(String, unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-
-    students: Mapped[list["Student"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+def _user_from_row(row: dict) -> User:
+    return User(id=row["id"], email=row["email"], password_hash=row["password_hash"], created_at=row.get("created_at"))
 
 
-class Student(Base):
-    __tablename__ = "students"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    name: Mapped[str] = mapped_column(String)
-    mcp_token: Mapped[str] = mapped_column(
-        String, unique=True, index=True, default=lambda: uuid.uuid4().hex + uuid.uuid4().hex
+def _student_from_row(row: dict) -> Student:
+    return Student(
+        id=row["id"],
+        owner_id=row["owner_id"],
+        name=row["name"],
+        mcp_token=row["mcp_token"],
+        status=row.get("status") or "created",
+        status_message=row.get("status_message") or "",
+        bio_text=row.get("bio_text") or "",
+        profile=row.get("profile"),
+        created_at=row.get("created_at"),
+        updated_at=row.get("updated_at"),
     )
-    status: Mapped[str] = mapped_column(String, default="created")  # created | processing | ready | error
-    status_message: Mapped[str] = mapped_column(String, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
-
-    owner: Mapped[User] = relationship(back_populates="students")
 
 
-def init_db() -> None:
-    Base.metadata.create_all(engine)
+def _progress_entry_from_row(row: dict) -> ProgressEntry:
+    return ProgressEntry(
+        topic=row["topic"],
+        subject=row.get("subject") or "",
+        mastery_level=row["mastery_level"],
+        notes=row.get("notes") or "",
+        logged_at=row["created_at"],
+    )
 
 
-def get_session() -> Session:
-    return SessionLocal()
+# --- Users -------------------------------------------------------------
+
+
+def create_user(email: str, password_hash: str) -> User:
+    result = _get_client().table("users").insert({"email": email, "password_hash": password_hash}).execute()
+    return _user_from_row(result.data[0])
+
+
+def get_user_by_email(email: str) -> User | None:
+    result = _get_client().table("users").select("*").eq("email", email).limit(1).execute()
+    return _user_from_row(result.data[0]) if result.data else None
+
+
+def get_user_by_id(user_id: str) -> User | None:
+    result = _get_client().table("users").select("*").eq("id", user_id).limit(1).execute()
+    return _user_from_row(result.data[0]) if result.data else None
+
+
+# --- Students ------------------------------------------------------------
+
+
+def create_student(owner_id: str, name: str) -> Student:
+    token = secrets.token_hex(32)
+    result = (
+        _get_client()
+        .table("students")
+        .insert({"owner_id": owner_id, "name": name, "mcp_token": token, "status": "created"})
+        .execute()
+    )
+    return _student_from_row(result.data[0])
+
+
+def get_student(student_id: str) -> Student | None:
+    result = _get_client().table("students").select("*").eq("id", student_id).limit(1).execute()
+    return _student_from_row(result.data[0]) if result.data else None
+
+
+def get_student_by_token(token: str) -> Student | None:
+    result = _get_client().table("students").select("*").eq("mcp_token", token).limit(1).execute()
+    return _student_from_row(result.data[0]) if result.data else None
+
+
+def get_students_for_owner(owner_id: str) -> list[Student]:
+    result = (
+        _get_client()
+        .table("students")
+        .select("*")
+        .eq("owner_id", owner_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return [_student_from_row(row) for row in result.data]
+
+
+def update_student_status(student_id: str, status: str, status_message: str = "") -> None:
+    _get_client().table("students").update({"status": status, "status_message": status_message}).eq(
+        "id", student_id
+    ).execute()
+
+
+def update_student_bio(student_id: str, bio_text: str) -> None:
+    _get_client().table("students").update({"bio_text": bio_text}).eq("id", student_id).execute()
+
+
+def update_student_profile(student_id: str, profile: dict) -> None:
+    _get_client().table("students").update({"profile": profile}).eq("id", student_id).execute()
+
+
+def delete_student(student_id: str) -> None:
+    _get_client().table("students").delete().eq("id", student_id).execute()
+
+
+# --- Progress log ----------------------------------------------------------
+
+
+def log_progress(student_id: str, topic: str, mastery_level: str, notes: str = "", subject: str = "") -> ProgressEntry:
+    result = (
+        _get_client()
+        .table("progress_log")
+        .insert(
+            {
+                "student_id": student_id,
+                "topic": topic.strip(),
+                "subject": subject.strip(),
+                "mastery_level": mastery_level.strip(),
+                "notes": notes.strip(),
+            }
+        )
+        .execute()
+    )
+    return _progress_entry_from_row(result.data[0])
+
+
+def get_progress_entries(student_id: str) -> list[ProgressEntry]:
+    result = (
+        _get_client()
+        .table("progress_log")
+        .select("*")
+        .eq("student_id", student_id)
+        .order("created_at")
+        .execute()
+    )
+    return [_progress_entry_from_row(row) for row in result.data]

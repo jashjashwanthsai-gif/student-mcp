@@ -6,12 +6,15 @@ a voice/memory twin (contrast persona_mcp, which is built around recalling
 doesn't need to recall isolated facts about the student - it needs to reason
 about trajectories: is this topic improving or stuck, and does the same kind
 of mistake keep recurring across attempts? That's a trend over an ordered
-log, not a nearest-neighbor text lookup, so it's kept as its own flat JSONL
-file per student rather than folded into the Chroma store.
+log, not a nearest-neighbor text lookup, so it's kept separate from the
+Qdrant-backed notes store (see storage.py) entirely.
 
-Kept file-based (students/<id>/progress_log.jsonl), not SQL, so the
-single-tenant stdio server and the multi-tenant webapp share the exact same
-mechanism with no extra dependency for the core library.
+The local single-tenant stdio server keeps this file-based
+(students/<id>/progress_log.jsonl). The multi-tenant webapp instead logs
+entries to a Supabase table (see webapp/db.py's log_progress/
+get_progress_entries) so progress survives a redeploy - both flows feed the
+same ProgressEntry dataclass into the `_from_entries` functions below, so the
+trend/pattern computation itself isn't duplicated per backend.
 """
 
 import json
@@ -69,32 +72,39 @@ def read_progress_log(student_id: str) -> list[ProgressEntry]:
     return entries
 
 
-def topic_trajectory(student_id: str, subject: str = "") -> dict[str, list[ProgressEntry]]:
-    """Groups the log by topic (optionally filtered to a subject), preserving
-    chronological order so callers see the mastery TREND, not just the latest
-    state - e.g. "struggling -> practicing -> mastered" vs. just "mastered"."""
+def group_by_topic(entries: list[ProgressEntry], subject: str = "") -> dict[str, list[ProgressEntry]]:
+    """Groups a list of entries by topic (optionally filtered to a subject),
+    preserving chronological order so callers see the mastery TREND, not just
+    the latest state - e.g. "struggling -> practicing -> mastered" vs. just
+    "mastered". Backend-agnostic: works the same whether entries came from the
+    local JSONL log or a Supabase query."""
     subject_lower = subject.strip().lower()
     by_topic: dict[str, list[ProgressEntry]] = {}
-    for entry in read_progress_log(student_id):
+    for entry in entries:
         if subject_lower and subject_lower not in entry.subject.lower() and subject_lower not in entry.topic.lower():
             continue
         by_topic.setdefault(entry.topic, []).append(entry)
     return by_topic
 
 
-def summarize_knowledge_gaps(student_id: str, subject: str = "") -> list[str]:
+def topic_trajectory(student_id: str, subject: str = "") -> dict[str, list[ProgressEntry]]:
+    """File-based wrapper around group_by_topic for the local single-tenant flow."""
+    return group_by_topic(read_progress_log(student_id), subject)
+
+
+def summarize_knowledge_gaps_from_entries(entries: list[ProgressEntry], subject: str = "") -> list[str]:
     """Topics whose MOST RECENT logged mastery level indicates a struggle, with
     the full trend and any recurring note (often where the actual error
     pattern lives, e.g. "mixes up numerator/denominator" showing up 3 times
     in a row despite re-teaching) - the live, trend-aware counterpart to the
     baseline profile's static `weaknesses`."""
     summaries = []
-    for topic, entries in topic_trajectory(student_id, subject).items():
-        latest = entries[-1]
+    for topic, topic_entries in group_by_topic(entries, subject).items():
+        latest = topic_entries[-1]
         if latest.mastery_level.lower() not in STRUGGLE_LEVELS:
             continue
-        trend = " -> ".join(e.mastery_level for e in entries)
-        notes = list(dict.fromkeys(e.notes for e in entries if e.notes))
+        trend = " -> ".join(e.mastery_level for e in topic_entries)
+        notes = list(dict.fromkeys(e.notes for e in topic_entries if e.notes))
         line = f"{topic}: {trend}"
         if notes:
             line += f" (recurring notes: {'; '.join(notes)})"
@@ -102,23 +112,41 @@ def summarize_knowledge_gaps(student_id: str, subject: str = "") -> list[str]:
     return summaries
 
 
-def summarize_trajectory(student_id: str, subject: str = "") -> list[str]:
+def summarize_trajectory_from_entries(entries: list[ProgressEntry], subject: str = "") -> list[str]:
     """Full trend per topic (struggling and mastered alike) - answers "how is
     this student actually progressing", not just "what are they bad at"."""
     lines = []
-    for topic, entries in topic_trajectory(student_id, subject).items():
-        trend = " -> ".join(e.mastery_level for e in entries)
-        span = f"{len(entries)} update(s)"
+    for topic, topic_entries in group_by_topic(entries, subject).items():
+        trend = " -> ".join(e.mastery_level for e in topic_entries)
+        span = f"{len(topic_entries)} update(s)"
         lines.append(f"{topic}: {trend} ({span})")
     return lines
 
 
-def recurring_error_notes(student_id: str, min_occurrences: int = 2) -> list[str]:
+def recurring_error_notes_from_entries(entries: list[ProgressEntry], min_occurrences: int = 2) -> list[str]:
     """Notes that have been logged more than once across any topic - a signal
     that a specific MISTAKE PATTERN (not just a weak topic) keeps recurring,
     which is exactly the kind of thing a flat weaknesses list can't surface."""
     counts: dict[str, int] = {}
-    for entry in read_progress_log(student_id):
+    for entry in entries:
         if entry.notes:
             counts[entry.notes] = counts.get(entry.notes, 0) + 1
     return [note for note, count in counts.items() if count >= min_occurrences]
+
+
+def summarize_knowledge_gaps(student_id: str, subject: str = "") -> list[str]:
+    """File-based wrapper for the local single-tenant flow - see
+    summarize_knowledge_gaps_from_entries for the backend-agnostic logic."""
+    return summarize_knowledge_gaps_from_entries(read_progress_log(student_id), subject)
+
+
+def summarize_trajectory(student_id: str, subject: str = "") -> list[str]:
+    """File-based wrapper for the local single-tenant flow - see
+    summarize_trajectory_from_entries for the backend-agnostic logic."""
+    return summarize_trajectory_from_entries(read_progress_log(student_id), subject)
+
+
+def recurring_error_notes(student_id: str, min_occurrences: int = 2) -> list[str]:
+    """File-based wrapper for the local single-tenant flow - see
+    recurring_error_notes_from_entries for the backend-agnostic logic."""
+    return recurring_error_notes_from_entries(read_progress_log(student_id), min_occurrences)

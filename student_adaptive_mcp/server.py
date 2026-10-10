@@ -6,11 +6,14 @@ Run (directly, for local testing):
 Run (as Claude Desktop will launch it):
     STUDENT_NAME=<name> uv run python -m student_adaptive_mcp.server
 
-Multi-tenant note: this currently loads ONE student from module-level
-singletons via the STUDENT_NAME env var. A hosted multi-tenant version would
-replace these singletons with a per-request/per-connection lookup keyed by a
-URL path segment or bearer token, resolving to a tenant's student directory -
-same shape as every other unauthenticated "link per student" MVP.
+Needs QDRANT_URL/QDRANT_API_KEY set (notes vector memory lives in Qdrant, see
+student_adaptive_mcp/storage.py - hosted, not local disk, even for this
+single-tenant flow). Bio and the learner profile still live as local files
+under students/<name>/ for this flow; the progress log also stays local
+(students/<name>/progress_log.jsonl). The hosted multi-tenant version
+(webapp/mcp_multi.py) instead resolves the student per-request from a URL
+token, backed by Supabase for metadata/profile/progress instead of local
+files - same Qdrant backend either way.
 
 Privacy note: raw uploaded files (report cards, notes) never leave this
 server. Only the derived learner profile, notes chunks, and progress updates

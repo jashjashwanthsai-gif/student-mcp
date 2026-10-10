@@ -13,7 +13,7 @@ import anthropic
 
 from student_adaptive_mcp import config, storage
 from student_adaptive_mcp.chunking import chunk_notes
-from student_adaptive_mcp.profile import build_learner_profile, save_profile
+from student_adaptive_mcp.profile import LearnerProfile, build_learner_profile, save_profile
 from student_adaptive_mcp.report_parser import MarkRecord, parse_marks_csv, summarize_marks
 
 MAX_NOTES_SAMPLE_CHARS = 6000
@@ -27,6 +27,7 @@ class IngestionReport:
     notes_files_parsed: int = 0
     chunks_created: int = 0
     profile_built: bool = False
+    profile: LearnerProfile | None = None
     sample_chunks: list[str] | None = None
 
 
@@ -107,7 +108,7 @@ def run_ingestion(
         if all_records or notes_sample:
             client = anthropic.Anthropic()
             profile = build_learner_profile(marks_summary, notes_sample, bio_text, display_name, client)
-            save_profile(profile, config.get_profile_path(student_name))
+            report.profile = profile
             report.profile_built = True
 
     return report
@@ -132,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Marks files parsed: {report.marks_files_parsed}  (records: {report.mark_records}, subjects: {report.subjects_found})")
     print(f"Notes files parsed: {report.notes_files_parsed}  (chunks: {report.chunks_created})")
     print(f"Learner profile built: {report.profile_built}")
+    if report.profile is not None:
+        save_profile(report.profile, config.get_profile_path(args.student))
+        print(f"Learner profile saved to {config.get_profile_path(args.student)}")
     if report.sample_chunks:
         print("\nSample notes chunk preview:")
         for i, text in enumerate(report.sample_chunks, 1):

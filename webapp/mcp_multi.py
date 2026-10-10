@@ -7,6 +7,13 @@ HTTP request via FastMCP's get_http_request(). That's what lets one running
 server process many students at once, each with their own unique
 /mcp/<token> URL.
 
+Unlike persona_mcp's multi-tenant server, ask_tutor DOES call Anthropic
+directly to generate a ready-to-show tutoring reply - a deliberate difference
+from persona's "host model writes the reply" design, not an oversight (see
+student_adaptive_mcp/server.py's module docstring). So this backend needs
+ANTHROPIC_API_KEY in addition to Supabase (accounts/student metadata/profile/
+progress) and Qdrant (notes vector memory).
+
 Privacy note: raw uploaded files (report cards, notes) never leave this
 server. Only the derived learner profile, notes chunks, and progress updates
 below are ever returned to a connected AI client.
@@ -18,10 +25,15 @@ import anthropic
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
 
-from student_adaptive_mcp import config, progress, storage
-from student_adaptive_mcp.profile import load_profile
+from student_adaptive_mcp import storage
+from student_adaptive_mcp.profile import profile_from_dict
+from student_adaptive_mcp.progress import (
+    recurring_error_notes_from_entries,
+    summarize_knowledge_gaps_from_entries,
+    summarize_trajectory_from_entries,
+)
 from student_adaptive_mcp.prompts import build_tutor_system_prompt
-from webapp.db import Student, get_session
+from webapp.db import Student, get_progress_entries, get_student_by_token, log_progress
 
 GENERATION_MODEL = "claude-sonnet-5-5"
 
@@ -64,20 +76,10 @@ def _current_student() -> Student:
     if not token:
         raise StudentLookupError("No student token found in the connection URL.")
 
-    db = get_session()
-    try:
-        student = db.query(Student).filter_by(mcp_token=token).first()
-    finally:
-        db.close()
-
+    student = get_student_by_token(token)
     if student is None:
         raise StudentLookupError("This MCP link is invalid, or the student has been deleted.")
     return student
-
-
-def _load_bio(student_id: str) -> str:
-    bio_path = config.get_bio_path(student_id)
-    return bio_path.read_text(encoding="utf-8") if bio_path.exists() else ""
 
 
 def _bulleted(items: list[str]) -> list[str]:
@@ -92,14 +94,13 @@ def get_student_profile() -> str:
     teach at the right level instead of a generic one.
     """
     student = _current_student()
-    if student.status != "ready":
+    if student.status != "ready" or not student.profile:
         return (
             f"'{student.name}' isn't ready yet (status: {student.status}). "
             "Finish uploading and processing data for this student on the platform first."
         )
 
-    p = load_profile(config.get_profile_path(student.id))
-    bio_text = _load_bio(student.id)
+    p = profile_from_dict(student.profile)
     lines = [
         f"Student: {student.name}",
         f"Grade level: {p.grade_level}",
@@ -118,7 +119,7 @@ def get_student_profile() -> str:
         "Recommended focus topics:",
         *_bulleted(p.recommended_focus_topics),
         "",
-        f"Bio: {bio_text.strip() or '(none provided)'}",
+        f"Bio: {student.bio_text.strip() or '(none provided)'}",
     ]
     return "\n".join(lines)
 
@@ -134,13 +135,13 @@ def get_knowledge_gaps(subject: str = "") -> list[str]:
     prerequisite gaps instead of assuming they're not there.
     """
     student = _current_student()
-    if student.status != "ready":
+    if student.status != "ready" or not student.profile:
         return [f"'{student.name}' isn't ready yet (status: {student.status})."]
 
-    p = load_profile(config.get_profile_path(student.id))
+    p = profile_from_dict(student.profile)
     subject_lower = subject.strip().lower()
     baseline = [w for w in p.weaknesses if not subject_lower or subject_lower in w.lower()]
-    live = progress.summarize_knowledge_gaps(student.id, subject)
+    live = summarize_knowledge_gaps_from_entries(get_progress_entries(student.id), subject)
 
     combined = baseline + live
     return combined or ["(no specific knowledge gaps recorded" + (f" for '{subject}'" if subject else "") + " yet)"]
@@ -158,7 +159,7 @@ def get_learning_trajectory(subject: str = "") -> list[str]:
     if student.status != "ready":
         return [f"'{student.name}' isn't ready yet (status: {student.status})."]
 
-    lines = progress.summarize_trajectory(student.id, subject)
+    lines = summarize_trajectory_from_entries(get_progress_entries(student.id), subject)
     return lines or ["(no progress logged yet" + (f" for '{subject}'" if subject else "") + " - call update_learning_progress as the student works through topics)"]
 
 
@@ -180,20 +181,20 @@ def ask_tutor(message: str) -> str:
     Returns the final reply - return this text to the student as-is, do not rewrite it yourself.
     """
     student = _current_student()
-    if student.status != "ready":
+    if student.status != "ready" or not student.profile:
         return (
             f"'{student.name}' isn't ready to tutor yet (status: {student.status}). "
             "Finish uploading and processing data for this student on the platform first."
         )
 
-    profile = load_profile(config.get_profile_path(student.id))
-    bio_text = _load_bio(student.id)
+    profile = profile_from_dict(student.profile)
     collection = storage.get_collection(student.id)
     memory_chunks = storage.query_memories(collection, message, k=5)
-    live_knowledge_gaps = progress.summarize_knowledge_gaps(student.id)
-    recurring_errors = progress.recurring_error_notes(student.id)
+    entries = get_progress_entries(student.id)
+    live_knowledge_gaps = summarize_knowledge_gaps_from_entries(entries)
+    recurring_errors = recurring_error_notes_from_entries(entries)
     system_prompt = build_tutor_system_prompt(
-        student.name, profile, bio_text, memory_chunks, live_knowledge_gaps, recurring_errors
+        student.name, profile, student.bio_text, memory_chunks, live_knowledge_gaps, recurring_errors
     )
 
     response = _anthropic_client.messages.create(
@@ -224,7 +225,7 @@ def update_learning_progress(topic: str, mastery_level: str, notes: str = "", su
             `get_knowledge_gaps`/`get_learning_trajectory` by subject.
     """
     student = _current_student()
-    progress.log_progress(student.id, topic, mastery_level, notes, subject)
+    log_progress(student.id, topic, mastery_level, notes, subject)
 
     collection = storage.get_collection(student.id)
     text = f"{topic}: {mastery_level}" + (f" - {notes}" if notes else "")

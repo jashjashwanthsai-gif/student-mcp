@@ -63,10 +63,18 @@ def build_learner_profile(
     )
 
 
+def profile_to_dict(profile: LearnerProfile) -> dict:
+    return asdict(profile)
+
+
+def profile_from_dict(data: dict) -> LearnerProfile:
+    return LearnerProfile(**data)
+
+
 def save_profile(profile: LearnerProfile, path: Path) -> None:
-    path.write_text(json.dumps(asdict(profile), indent=2), encoding="utf-8")
+    path.write_text(json.dumps(profile_to_dict(profile), indent=2), encoding="utf-8")
 
 
 def load_profile(path: Path) -> LearnerProfile:
     data = json.loads(path.read_text(encoding="utf-8"))
-    return LearnerProfile(**data)
+    return profile_from_dict(data)

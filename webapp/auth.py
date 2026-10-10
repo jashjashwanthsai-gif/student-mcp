@@ -1,10 +1,9 @@
 """Password hashing and session-cookie based login."""
 
 import bcrypt
-from fastapi import HTTPException, Request
-from sqlalchemy.orm import Session
+from fastapi import Request
 
-from webapp.db import User
+from webapp.db import User, get_user_by_id
 
 SESSION_KEY = "user_id"
 
@@ -28,15 +27,8 @@ def logout_user(request: Request) -> None:
     request.session.pop(SESSION_KEY, None)
 
 
-def get_current_user(request: Request, db: Session) -> User | None:
+def get_current_user(request: Request) -> User | None:
     user_id = request.session.get(SESSION_KEY)
     if not user_id:
         return None
-    return db.get(User, user_id)
-
-
-def require_user(request: Request, db: Session) -> User:
-    user = get_current_user(request, db)
-    if user is None:
-        raise HTTPException(status_code=303, headers={"Location": "/login"})
-    return user
+    return get_user_by_id(user_id)

@@ -1,42 +1,38 @@
 """Background ingestion job triggered after a student's files are uploaded."""
 
 from student_adaptive_mcp.ingest import run_ingestion
-from webapp.db import Student, get_session
+from student_adaptive_mcp.profile import profile_to_dict
+from webapp import db
 
 
 def process_student_upload(student_id: str, display_name: str) -> None:
-    db = get_session()
+    db.update_student_status(student_id, "processing", "Parsing marks/notes and building the learner profile...")
+
     try:
-        student = db.get(Student, student_id)
-        if student is None:
-            return
-        student.status = "processing"
-        student.status_message = "Parsing marks/notes and building the learner profile..."
-        db.commit()
+        report = run_ingestion(student_name=student_id, display_name=display_name, reset=True)
+    except Exception as exc:  # noqa: BLE001 - surface any failure to the dashboard
+        db.update_student_status(student_id, "error", f"Ingestion failed: {exc}")
+        return
 
-        try:
-            report = run_ingestion(student_name=student_id, display_name=display_name, reset=True)
-        except Exception as exc:  # noqa: BLE001 - surface any failure to the dashboard
-            student.status = "error"
-            student.status_message = f"Ingestion failed: {exc}"
-            db.commit()
-            return
+    if report.mark_records == 0 and report.chunks_created == 0:
+        db.update_student_status(
+            student_id, "error", "No marks or notes found in the uploaded file(s). Check the format and try again."
+        )
+        return
 
-        if report.mark_records == 0 and report.chunks_created == 0:
-            student.status = "error"
-            student.status_message = "No marks or notes found in the uploaded file(s). Check the format and try again."
-        elif not report.profile_built:
-            student.status = "error"
-            student.status_message = (
-                "Couldn't build a learner profile from what was uploaded. Make sure the marks "
-                "CSV has subject/score columns, or add some notes, and try again."
-            )
-        else:
-            student.status = "ready"
-            student.status_message = (
-                f"Processed {report.mark_records} marks across {report.subjects_found} subjects "
-                f"and {report.chunks_created} notes chunks."
-            )
-        db.commit()
-    finally:
-        db.close()
+    if not report.profile_built or report.profile is None:
+        db.update_student_status(
+            student_id,
+            "error",
+            "Couldn't build a learner profile from what was uploaded. Make sure the marks "
+            "CSV has subject/score columns, or add some notes, and try again.",
+        )
+        return
+
+    db.update_student_profile(student_id, profile_to_dict(report.profile))
+    db.update_student_status(
+        student_id,
+        "ready",
+        f"Processed {report.mark_records} marks across {report.subjects_found} subjects "
+        f"and {report.chunks_created} notes chunks.",
+    )
