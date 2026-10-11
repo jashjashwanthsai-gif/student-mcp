@@ -23,7 +23,6 @@ below are ever returned to a connected AI client.
 import os
 from datetime import datetime, timezone
 
-import anthropic
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
@@ -54,14 +53,30 @@ _bio_path = config.get_bio_path(STUDENT_NAME)
 bio_text = _bio_path.read_text(encoding="utf-8") if _bio_path.exists() else ""
 
 collection = storage.get_collection(STUDENT_NAME)
-anthropic_client = anthropic.Anthropic()
+
+
+def _make_anthropic_client():
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    import anthropic
+
+    return anthropic.Anthropic()
+
+
+anthropic_client = _make_anthropic_client()
 
 SERVER_INSTRUCTIONS = f"""This server gives you a persistent academic profile for {STUDENT_NAME}, a
 real student, so you can teach them at their actual level instead of starting from zero every
 conversation. Use `get_student_profile` to see their level/strengths/style, `get_knowledge_gaps`
 to check what they struggle with in a subject before explaining it, `get_learning_trajectory` to
-see how a topic has trended over time (not just its current state), `ask_tutor` to get a fully
-adapted explanation in one call, and `recall_notes` for raw supporting context.
+see how a topic has trended over time (not just its current state), and `recall_notes` for raw
+supporting context.
+
+Call `ask_tutor` to teach - it returns EITHER a ready-to-show reply (a string: show it to the
+student as-is) OR a context block to teach from yourself (a dict with `context_for_reply`: in that
+case YOU write the actual tutoring explanation using that context, adapted to the student's
+level/pace/error patterns described in it - do not just relay the dict's fields, and do not mention
+that you received raw context instead of a finished reply).
 
 This server also lets you WRITE progress back, so {STUDENT_NAME}'s profile keeps improving across
 sessions - even a session on a different account:
@@ -156,22 +171,27 @@ def recall_notes(query: str, k: int = 5) -> list[str]:
 
 
 @mcp.tool
-def ask_tutor(message: str) -> str:
-    """Send the student's question/message to a tutor that is already fully adapted to their
-    profile (level, pace, style, gaps, interests) and get back a ready-to-show explanation.
-    Returns the final reply - return this text to the student as-is, do not rewrite it yourself.
+def ask_tutor(message: str) -> str | dict:
+    """Send the student's question/message to get an explanation fully adapted to their profile
+    (level, pace, style, gaps, interests). Returns EITHER a string (a ready-to-show reply - show it
+    to the student as-is, do not rewrite it) OR a dict with `context_for_reply` (no server-side
+    generation configured - YOU must write the tutoring explanation yourself using that context,
+    adapted to the student's level/pace/error patterns described in it).
     """
     memory_chunks = storage.query_memories(collection, message, k=5)
     live_knowledge_gaps = progress.summarize_knowledge_gaps(STUDENT_NAME)
     recurring_errors = progress.recurring_error_notes(STUDENT_NAME)
-    system_prompt = build_tutor_system_prompt(
+    context = build_tutor_system_prompt(
         STUDENT_NAME, learner_profile, bio_text, memory_chunks, live_knowledge_gaps, recurring_errors
     )
+
+    if anthropic_client is None:
+        return {"student_name": STUDENT_NAME, "context_for_reply": context}
 
     response = anthropic_client.messages.create(
         model=GENERATION_MODEL,
         max_tokens=1024,
-        system=system_prompt,
+        system=context,
         messages=[{"role": "user", "content": message}],
     )
     return response.content[0].text

@@ -1,10 +1,48 @@
 # Student Adaptive MCP
 
-Upload a student's report cards/marks + notes, get back an MCP link. Paste
-that link into Claude, ChatGPT, or any MCP-compatible client and the AI
-instantly knows this student's level, knowledge gaps, and how they tend to
-learn - then keeps that understanding growing from live tutoring sessions,
-across chats and accounts, instead of starting from zero every time.
+**What this is:** a persistent learning profile for one real K-12 student -
+grade level, strengths, specific knowledge gaps, and *how* they tend to make
+mistakes - that any MCP-compatible AI (Claude, ChatGPT, etc.) can plug into
+and tutor from immediately, instead of starting from zero every chat. A
+parent, tutor, or teacher uploads report cards/marks + notes once; the
+platform turns that into a learner profile and a private link; from then on,
+every AI conversation that link is pasted into already knows this specific
+student.
+
+It is not a generic "AI tutor" chatbot - there's no built-in chat UI at all.
+It's the *memory layer* underneath one: a small MCP server that hands a host
+AI model the context and write-back tools it needs to actually adapt to one
+student, session after session, on whichever AI app the student/parent/tutor
+already uses.
+
+## How it works, end to end
+
+1. **Set up a student.** A parent/tutor/teacher signs up, adds a student by
+   name, and optionally fills in "about this student" (grade, interests used
+   for analogies, known learning differences).
+2. **Upload what you have.** A marks CSV (report card scores across terms)
+   and/or free-text notes (teacher remarks, syllabus excerpts). No special
+   formatting beyond the CSV columns below - plain `.txt`/`.md` for notes.
+3. **The platform builds a learner profile.** In the background: marks get
+   parsed and summarized per subject, notes get chunked and embedded into a
+   private per-student vector store (Qdrant), and one LLM call turns all of
+   it into a structured profile - strengths, baseline weaknesses, and
+   **recurring error patterns** (e.g. "rushes and makes sign errors under
+   time pressure"), not just a list of weak topics.
+4. **Connect the link.** Once processing finishes, the student's page shows
+   a private `/mcp/<token>` URL. Paste that into Claude Desktop, Claude.ai,
+   ChatGPT, or any other MCP client as a remote connector.
+5. **The AI tutors adaptively from message one.** The connected model calls
+   this server's tools (see below) to read the profile, pull relevant notes,
+   and get a fully-adapted explanation - calibrated to this student's level,
+   pace, and known mistake patterns, not a generic answer.
+6. **Progress gets written back, live.** As the student works through
+   topics, the AI logs structured mastery updates
+   (`struggling → practicing → mastered`, or a regression back to
+   `struggling`) and session summaries. That's what makes the next session
+   smarter than the last one - and it persists across a deleted chat or a
+   switch to a brand-new account, because it lives on this platform, not in
+   the chat history.
 
 ## This is not a "voice twin" - it's a learning-pattern profile
 
@@ -48,9 +86,15 @@ Required in `.env`:
   Settings > API. Run `webapp/supabase_schema.sql` once in the Supabase SQL
   Editor before first use - this backend can't create tables via the data API.
 - `QDRANT_URL` / `QDRANT_API_KEY` - from your Qdrant Cloud cluster.
-- `ANTHROPIC_API_KEY` - unlike a pure-retrieval design, `ask_tutor` generates
-  the tutoring reply server-side and profile extraction also calls Anthropic,
-  so this is required for the web platform too, not just local testing.
+- `ANTHROPIC_API_KEY` - optional. With it, `ask_tutor` generates the tutoring
+  reply server-side and profile extraction uses Anthropic for higher-fidelity
+  results. Without it, profile extraction falls back to a heuristic (stats
+  over marks, keyword rules over notes/bio - see
+  `student_adaptive_mcp/profile.py`), and `ask_tutor` returns the same
+  profile/gaps/notes as structured context instead of a reply - the connected
+  host model (whichever AI the link is pasted into) writes the tutoring
+  explanation itself from that context. Either way the platform runs
+  end-to-end with zero LLM API key.
 
 ## Run the platform
 
@@ -67,9 +111,10 @@ Open `http://127.0.0.1:8000`, sign up, and:
 3. **Upload data** - a marks CSV (see format below) and/or plain `.txt`/`.md`
    notes (teacher remarks, syllabus excerpts). This triggers background
    processing: parsing marks → chunking + embedding notes into a per-student
-   Qdrant collection → one Anthropic call to build the learner profile,
-   stored on the student's Supabase row. The page shows live status
-   (`processing` → `ready`, or `error` with a reason).
+   Qdrant collection → a learner profile built either by Anthropic (if
+   `ANTHROPIC_API_KEY` is set) or the heuristic fallback (if not), stored on
+   the student's Supabase row. The page shows live status (`processing` →
+   `ready`, or `error` with a reason).
 4. **Connect** - once ready, copy the MCP URL shown on the student's page
    (`http://<host>/mcp/<token>`) into Claude Desktop, Claude.ai, ChatGPT, or
    any other MCP client's remote-server settings.
@@ -205,7 +250,7 @@ uv run fastmcp dev student_adaptive_mcp/server.py       # local inspector
 
 Flags for `ingest`:
 - `--reset` - wipe and rebuild the vector store
-- `--skip-profile` - skip the Anthropic call (for quick re-testing of parsing/chunking)
+- `--skip-profile` - skip profile extraction entirely (for quick re-testing of parsing/chunking)
 
 Set `STUDENT_NAME` in your environment before running the stdio server. See
 `student_adaptive_mcp/server.py`'s docstring for Claude Desktop registration.
@@ -221,8 +266,9 @@ No `render.yaml` here - it's a manual dashboard flow:
 2. Build command: `uv sync`. Start command:
    `uv run uvicorn webapp.main:app --host 0.0.0.0 --port $PORT`.
 3. Add the env vars from Setup above (`WEBAPP_SECRET_KEY`, `SUPABASE_URL`,
-   `SUPABASE_SERVICE_ROLE_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`,
-   `ANTHROPIC_API_KEY`) in the service's Environment settings - use a real
+   `SUPABASE_SERVICE_ROLE_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, and
+   `ANTHROPIC_API_KEY` if you want server-side generation instead of the
+   heuristic fallback) in the service's Environment settings - use a real
    `WEBAPP_SECRET_KEY`, not the insecure dev default.
 4. Deploy. Since nothing durable lives on local disk anymore, a redeploy or a
    free-tier spin-down doesn't lose any student data - it's all in Supabase/
@@ -235,8 +281,12 @@ No `render.yaml` here - it's a manual dashboard flow:
 - Ingestion runs as a FastAPI background task in-process - fine for an MVP,
   but a large upload will tie up a worker thread; a real job queue would be
   the next step at scale.
-- No billing/usage limits - the platform's `ANTHROPIC_API_KEY` is shared
+- No billing/usage limits when `ANTHROPIC_API_KEY` is set - it's shared
   across all students and users.
+- The heuristic profile/tutor fallback (no API key) is lower-fidelity by
+  design: fixed percentage thresholds and keyword matching over notes, not
+  semantic understanding - e.g. a subject trending down but still just above
+  the weak-subject cutoff won't get flagged the way an LLM read would catch it.
 - Session-end progress capture depends on the host model honoring the
   server's instructions, not a guaranteed lifecycle hook.
 - The stored learner profile is a one-shot snapshot from ingestion; it only

@@ -3,179 +3,335 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Student Adaptive MCP - Give any AI a real memory of how your student learns</title>
+  <title>Student Adaptive MCP - A tutor that remembers how your student learns</title>
+  <meta name="description" content="Upload a report card and some notes. Any AI your student already uses - Claude, ChatGPT, or anything else that speaks MCP - starts teaching them at their actual level, not a generic one.">
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <style>
-    body { font-family: 'Inter', -apple-system, Segoe UI, Roboto, sans-serif; background-color: #0A0B0F; }
+    :root {
+      --bg: #09090d;
+      --surface: #13161d;
+      --surface-2: #181c25;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(255, 255, 255, 0.18);
+      --emerald: #34d399;
+      --amber: #fbbf7d;
+    }
+    body { font-family: 'Inter', -apple-system, Segoe UI, Roboto, sans-serif; background-color: var(--bg); }
     .font-tech { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-    .text-gradient {
-      background: linear-gradient(180deg, #ffffff 0%, #9aa3af 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
+
+    h1 { font-size: clamp(2.5rem, 1.7rem + 3.2vw, 4.25rem); }
+
+    .bg-grid {
+      background-image:
+        linear-gradient(to right, rgba(255,255,255,0.045) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,0.045) 1px, transparent 1px);
+      background-size: 56px 56px;
+      -webkit-mask-image: radial-gradient(ellipse 60% 55% at 50% 0%, black 10%, transparent 70%);
+      mask-image: radial-gradient(ellipse 60% 55% at 50% 0%, black 10%, transparent 70%);
     }
     .glow {
-      background: radial-gradient(circle, rgba(16,185,129,0.22) 0%, rgba(16,185,129,0) 70%);
-      filter: blur(60px);
+      background: radial-gradient(closest-side, rgba(52,211,153,0.22), transparent);
+      filter: blur(40px);
     }
-    .card-hover { transition: all 300ms ease; }
-    .card-hover:hover { border-color: rgba(255,255,255,0.15); transform: translateY(-2px); }
-    .btn-primary { transition: all 200ms ease; }
-    .btn-primary:hover { opacity: 0.92; }
-    .btn-primary:active { transform: scale(0.97); }
-    .btn-ghost { transition: all 200ms ease; }
-    .btn-ghost:hover { background-color: rgba(255,255,255,0.06); }
-    .btn-ghost:active { transform: scale(0.97); }
+
+    .panel {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+    }
+    .panel-raised {
+      background: linear-gradient(180deg, var(--surface-2), var(--surface));
+      border: 1px solid var(--border);
+    }
+
+    .mock-card {
+      transform: rotate(1.25deg);
+      transition: transform 400ms cubic-bezier(.16,1,.3,1);
+    }
+    .mock-card:hover { transform: rotate(0deg) translateY(-4px); }
+
+    .chip {
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+    }
+
+    .link-arrow { transition: gap 150ms ease; }
+    .link-arrow:hover { gap: 0.625rem; }
+
+    .btn-primary { transition: filter 150ms ease, transform 150ms ease, box-shadow 150ms ease; }
+    .btn-primary:hover { filter: brightness(1.08); box-shadow: 0 8px 24px -8px rgba(52,211,153,0.45); }
+    .btn-primary:active { transform: translateY(1px); }
+    .btn-ghost { transition: background-color 150ms ease, border-color 150ms ease; }
+    .btn-ghost:hover { background-color: rgba(255, 255, 255, 0.05); border-color: var(--border-hover); }
+
+    .row { transition: background-color 200ms ease, padding-left 200ms ease; border-radius: 0.75rem; }
+    .row:hover { background-color: rgba(255,255,255,0.025); padding-left: 0.75rem; margin-left: -0.75rem; }
+    .row:not(:last-child) { border-bottom: 1px solid var(--border); }
+
+    .icon-badge {
+      background: rgba(52,211,153,0.08);
+      border: 1px solid rgba(52,211,153,0.2);
+      color: var(--emerald);
+    }
+
+    .fade-up { opacity: 0; transform: translateY(14px); animation: fadeUp 700ms cubic-bezier(.16,1,.3,1) forwards; }
+    @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+
     a, button { outline-offset: 2px; }
-    a:focus-visible, button:focus-visible { outline: 2px solid rgb(52 211 153); }
+    a:focus-visible, button:focus-visible { outline: 2px solid var(--emerald); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .btn-primary, .btn-ghost, .link-arrow, .row, .mock-card { transition: none; }
+      .fade-up { opacity: 1; transform: none; animation: none; }
+    }
   </style>
 </head>
-<body class="bg-[#0A0B0F] text-zinc-400 antialiased">
+<body class="bg-[#09090d] text-zinc-400 antialiased">
 
-  <nav class="max-w-6xl mx-auto flex items-center justify-between px-6 py-7">
-    <a href="/" class="flex items-center gap-2 text-white font-semibold tracking-tight">
-      <span class="w-6 h-6 rounded-md bg-gradient-to-br from-emerald-400 to-teal-600 ring-1 ring-white/20"></span>
+  <nav class="max-w-6xl mx-auto flex items-center justify-between px-6 py-6">
+    <a href="/" class="flex items-center gap-2.5 text-white font-semibold tracking-tight">
+      <span class="relative flex w-2.5 h-2.5">
+        <span class="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 animate-ping"></span>
+        <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"></span>
+      </span>
       Student Adaptive MCP
     </a>
     <div class="flex items-center gap-2">
-      <a href="/login" class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium text-zinc-300">Log in</a>
-      <a href="/signup" class="btn-primary px-4 py-2 rounded-lg text-sm font-semibold bg-white text-zinc-950 ring-1 ring-white/20">Sign up</a>
+      <a href="/login" class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium text-zinc-300 border border-transparent">Log in</a>
+      <a href="/signup" class="btn-primary px-4 py-2 rounded-lg text-sm font-semibold bg-white text-zinc-950">Sign up</a>
     </div>
   </nav>
 
   <!-- Hero -->
-  <section class="relative max-w-3xl mx-auto px-6 pt-24 pb-28 text-center">
-    <div class="glow absolute inset-x-0 top-0 h-80 -z-10 mx-auto w-[36rem]"></div>
-    <span class="font-tech inline-block text-[11px] font-medium uppercase tracking-[0.2em] text-emerald-400/80 border border-emerald-500/20 bg-emerald-500/5 rounded-full px-3 py-1 mb-6">
-      MCP-native tutoring context
-    </span>
-    <h1 class="text-5xl sm:text-6xl font-bold tracking-tight leading-tight text-gradient">
-      Every AI your student opens<br class="hidden sm:block"> should already know how they learn.
-    </h1>
-    <p class="mt-6 text-lg text-zinc-400 leading-relaxed max-w-2xl mx-auto">
-      Upload report cards, marks, and notes. We build a learner profile - level,
-      knowledge gaps, recurring mistake patterns, pace - then bring it into
-      Claude, ChatGPT, or any AI they already use, so tutoring adapts from the
-      very first message instead of starting from zero every chat.
-    </p>
-    <div class="mt-10 flex items-center justify-center gap-3">
-      <a href="/signup"
-         class="btn-primary px-6 py-3 rounded-lg text-sm font-semibold text-white bg-gradient-to-b from-emerald-400 to-emerald-600 ring-1 ring-white/20 shadow-lg shadow-emerald-500/20">
-        Add a student - free
-      </a>
-      <a href="/demo"
-         class="btn-ghost px-6 py-3 rounded-lg text-sm font-semibold text-emerald-300 border border-emerald-500/30">
-        See the demo
-      </a>
-      <a href="/login"
-         class="btn-ghost px-6 py-3 rounded-lg text-sm font-semibold text-zinc-200 border border-white/10">
-        Log in
-      </a>
+  <section class="relative overflow-hidden">
+    <div class="bg-grid absolute inset-0 -z-20 h-[640px]"></div>
+    <div class="glow absolute -top-24 left-1/2 -translate-x-1/2 w-[32rem] h-[32rem] -z-10"></div>
+
+    <div class="max-w-6xl mx-auto px-6 pt-16 pb-24 grid lg:grid-cols-[1.05fr_0.95fr] gap-16 items-center">
+      <div class="fade-up" style="animation-delay: 60ms">
+        <span class="chip inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium text-zinc-300 mb-7">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+          For K-12 tutoring, at home or in a classroom
+        </span>
+        <h1 class="font-bold tracking-tight leading-[1.05] text-white">
+          Most AI tutoring forgets your student the moment the chat closes.
+        </h1>
+        <p class="mt-6 text-lg leading-relaxed max-w-lg text-zinc-400">
+          This one doesn't. Upload a report card and a few notes once, and
+          from then on, Claude, ChatGPT, or whatever AI they already open for
+          homework help knows their level, their specific gaps, and how they
+          tend to make mistakes - before they've typed a single word.
+        </p>
+        <div class="mt-9 flex flex-wrap items-center gap-3">
+          <a href="/signup"
+             class="btn-primary px-5 py-3 rounded-lg text-sm font-semibold text-zinc-950 bg-emerald-400">
+            Set up a student - free
+          </a>
+          <a href="/demo" class="link-arrow inline-flex items-center gap-2 px-2 py-3 text-sm font-medium text-zinc-200">
+            See a real one
+            <span aria-hidden="true">&rarr;</span>
+          </a>
+        </div>
+        <div class="mt-10 flex items-center gap-5 text-xs text-zinc-600">
+          <span class="font-tech">Works with</span>
+          <span class="flex items-center gap-4 text-zinc-500 font-medium">
+            <span>Claude</span>
+            <span class="w-1 h-1 rounded-full bg-zinc-700"></span>
+            <span>ChatGPT</span>
+            <span class="w-1 h-1 rounded-full bg-zinc-700"></span>
+            <span>any MCP-ready AI</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- Product mockup: a student profile card, illustrative -->
+      <div class="fade-up" style="animation-delay: 180ms">
+        <div class="mock-card panel-raised rounded-2xl p-5 shadow-2xl shadow-black/50 max-w-sm mx-auto">
+          <div class="flex items-center justify-between mb-5">
+            <div class="flex items-center gap-2.5">
+              <span class="w-8 h-8 rounded-full bg-emerald-400/15 border border-emerald-400/30 flex items-center justify-center text-emerald-300 text-xs font-semibold">A</span>
+              <div>
+                <p class="text-sm font-semibold text-white leading-none">Alex</p>
+                <p class="text-xs text-zinc-500 mt-1">Grade 7 &middot; profile ready</p>
+              </div>
+            </div>
+            <span class="chip rounded-full px-2.5 py-1 text-[11px] font-tech text-emerald-300">live</span>
+          </div>
+
+          <div class="space-y-3.5 text-xs">
+            <div>
+              <p class="font-tech uppercase tracking-wider text-zinc-600 mb-1.5">Strength</p>
+              <p class="text-zinc-300">English, trending up (85% &rarr; 88%)</p>
+            </div>
+            <div>
+              <p class="font-tech uppercase tracking-wider text-zinc-600 mb-1.5">Recurring pattern</p>
+              <p class="text-zinc-300">Rushes multi-step problems, skips re-reading word problems</p>
+            </div>
+            <div>
+              <p class="font-tech uppercase tracking-wider text-zinc-600 mb-1.5">Analogies that land</p>
+              <p class="text-zinc-300">Club football, Minecraft builds</p>
+            </div>
+          </div>
+
+          <div class="mt-5 pt-4 border-t border-white/[0.06]">
+            <div class="flex justify-end mb-2">
+              <div class="bg-emerald-500/90 text-zinc-950 text-xs font-medium rounded-xl rounded-br-sm px-3 py-2 max-w-[85%]">
+                how many more goals to reach 32 if we have 14, 3 pts each?
+              </div>
+            </div>
+            <div class="flex justify-start">
+              <div class="bg-white/[0.06] text-zinc-300 text-xs rounded-xl rounded-bl-sm px-3 py-2 max-w-[85%]">
+                Read it once more first - it's asking for MORE goals, not the
+                total. 32 - 14 = 18 to go, so...
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="text-center text-xs text-zinc-600 mt-4">Illustrative - matches the real profile shown in the demo</p>
+      </div>
     </div>
   </section>
 
-  <!-- How it works -->
-  <section class="max-w-6xl mx-auto px-6 py-24 sm:py-32">
-    <h2 class="text-3xl font-bold tracking-tight text-white text-center mb-16">How it works</h2>
-    <div class="grid sm:grid-cols-3 gap-6">
-      <div class="card-hover rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 text-left shadow-xl shadow-black/20">
-        <span class="font-tech inline-block text-[11px] font-semibold tracking-widest text-emerald-400/90 mb-5">STEP 01</span>
-        <h3 class="text-white font-semibold mb-2">Upload marks + notes</h3>
-        <p class="text-sm text-zinc-400 leading-relaxed">A report-card/marks CSV across terms, plus
-          teacher remarks or syllabus notes. Add interests and any learning
-          differences a tutor should know about.</p>
+  <!-- The problem, stated plainly -->
+  <section class="max-w-4xl mx-auto px-6 py-10 border-t border-white/[0.06]">
+    <div class="grid sm:grid-cols-[auto_1fr] gap-5 sm:gap-8">
+      <p class="font-tech text-xs uppercase tracking-[0.14em] text-zinc-600 sm:pt-1">The gap<br class="hidden sm:block">this closes</p>
+      <p class="text-xl sm:text-2xl leading-snug text-zinc-200 max-w-2xl border-l-2 border-emerald-400/40 pl-5 sm:pl-6 sm:border-l">
+        A parent, tutor, or teacher can see the pattern - "she rushes through
+        word problems," "he's fine until fractions show up." A fresh AI chat
+        can't. It gives the same explanation it would give anyone, finds out
+        the hard way what doesn't land, and forgets all of it by the next
+        conversation.
+      </p>
+    </div>
+  </section>
+
+  <!-- Who it's for -->
+  <section class="max-w-4xl mx-auto px-6 py-20 border-t border-white/[0.06]">
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-500 mb-2">Who this is for</h2>
+    <p class="text-zinc-300 mb-10 max-w-md">Built around however you actually support a student, not one specific role.</p>
+    <div>
+      <div class="row py-6 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-8 px-1">
+        <span class="icon-badge w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V9.5Z"/></svg>
+        </span>
+        <div class="sm:w-40 shrink-0"><h3 class="text-white font-medium">Parents</h3></div>
+        <p class="text-sm leading-relaxed">You already know your kid's weak spots better than any
+          placement test. Hand that knowledge to whatever AI they use for
+          homework, instead of repeating it over their shoulder every night.</p>
       </div>
-      <div class="card-hover rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 text-left shadow-xl shadow-black/20">
-        <span class="font-tech inline-block text-[11px] font-semibold tracking-widest text-emerald-400/90 mb-5">STEP 02</span>
-        <h3 class="text-white font-semibold mb-2">We learn their learning patterns</h3>
-        <p class="text-sm text-zinc-400 leading-relaxed">Not tone or vocabulary - academic level,
-          specific knowledge gaps, recurring mistake patterns, pace and style.
-          Every tutoring session logs structured progress so trends (and
-          regressions) show up, not just a one-time snapshot.</p>
+      <div class="row py-6 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-8 px-1">
+        <span class="icon-badge w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5c-1.5-1.5-4-2-7-1v13c3 0 5.5.5 7 2 1.5-1.5 4-2 7-2V5.5c-3-1-5.5-.5-7 1Z"/><path d="M12 6.5V20"/></svg>
+        </span>
+        <div class="sm:w-40 shrink-0"><h3 class="text-white font-medium">Private tutors</h3></div>
+        <p class="text-sm leading-relaxed">Running several students across different subjects, you
+          don't have time to re-explain each one's history at the start of
+          every session. Set it up once per student, done.</p>
       </div>
-      <div class="card-hover rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 text-left shadow-xl shadow-black/20">
-        <span class="font-tech inline-block text-[11px] font-semibold tracking-widest text-emerald-400/90 mb-5">STEP 03</span>
-        <h3 class="text-white font-semibold mb-2">Connect, anywhere</h3>
-        <p class="text-sm text-zinc-400 leading-relaxed">One private link. Paste it into Claude,
-          ChatGPT, or any MCP-compatible AI and tutoring is adapted to this
-          student from the first message, in every chat they open.</p>
+      <div class="row py-6 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-8 px-1">
+        <span class="icon-badge w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
+        </span>
+        <div class="sm:w-40 shrink-0"><h3 class="text-white font-medium">Tutoring centers &amp; pods</h3></div>
+        <p class="text-sm leading-relaxed">Each student gets their own private profile and link, so
+          staff can hand off a student without losing a term's worth of
+          context - and no one's notes get mixed up with anyone else's.</p>
+      </div>
+      <div class="row py-6 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-8 px-1">
+        <span class="icon-badge w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6-9 6-9-6Z"/><path d="M7 12.5V17c0 1.1 2.2 2 5 2s5-.9 5-2v-4.5"/></svg>
+        </span>
+        <div class="sm:w-40 shrink-0"><h3 class="text-white font-medium">Homeschool families</h3></div>
+        <p class="text-sm leading-relaxed">Managing multiple kids across multiple subjects, with no
+          separate teacher to track each one's quirks - this keeps that
+          tracking in one place, per child.</p>
+      </div>
+      <div class="row py-6 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-8 px-1">
+        <span class="icon-badge w-9 h-9 rounded-lg flex items-center justify-center shrink-0">
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V8l8-4 8 4v11"/><path d="M4 19h16M9 19v-5h6v5"/></svg>
+        </span>
+        <div class="sm:w-40 shrink-0"><h3 class="text-white font-medium">Teachers</h3></div>
+        <p class="text-sm leading-relaxed">For the student who needs more practice than class time
+          allows, give them AI help after hours that's calibrated to where
+          they're actually stuck, not generic grade-level review.</p>
       </div>
     </div>
   </section>
 
-  <!-- Value grid -->
-  <section class="max-w-6xl mx-auto px-6 py-24 sm:py-32">
-    <h2 class="text-3xl font-bold tracking-tight text-white text-center mb-16">What you actually get</h2>
-    <div class="grid sm:grid-cols-2 gap-6">
-      <div class="card-hover rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 shadow-xl shadow-black/20">
-        <h3 class="text-white font-semibold mb-2">Patterns, not just topics</h3>
-        <p class="text-sm text-zinc-400 leading-relaxed">"Weak at fractions" isn't that useful on
-          its own. We track HOW mistakes happen - rushes under pressure, skips
-          re-reading questions - so the tutor can head off the next mistake,
-          not just correct the last one.</p>
+  <!-- What actually changes -->
+  <section class="max-w-4xl mx-auto px-6 py-20 border-t border-white/[0.06]">
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-zinc-500 mb-10">What actually changes</h2>
+    <div class="grid sm:grid-cols-2 gap-x-10 gap-y-10">
+      <div class="panel p-6">
+        <h3 class="text-white font-medium mb-2">Patterns, not just topics</h3>
+        <p class="text-sm leading-relaxed">"Weak at fractions" doesn't tell you much. Knowing a
+          student rushes under time pressure or skips re-reading word
+          problems does - a tutor can watch for that and head it off before
+          it happens again, in any subject.</p>
       </div>
-      <div class="card-hover rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 shadow-xl shadow-black/20">
-        <h3 class="text-white font-semibold mb-2">It keeps growing - and can regress</h3>
-        <p class="text-sm text-zinc-400 leading-relaxed">Every topic has a real trend
-          (struggling &rarr; practicing &rarr; mastered, or back again) logged
-          from actual tutoring sessions, not a single static label from the
-          day you uploaded a report card.</p>
+      <div class="panel p-6">
+        <h3 class="text-white font-medium mb-2">A trend, not a snapshot</h3>
+        <p class="text-sm leading-relaxed">A topic can go struggling &rarr; practicing &rarr; mastered,
+          or regress after it looked solid - that whole history is what the
+          AI sees, not just what was true the day a report card was
+          uploaded.</p>
       </div>
-      <div class="card-hover rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 shadow-xl shadow-black/20">
-        <h3 class="text-white font-semibold mb-2">Works where they already study</h3>
-        <p class="text-sm text-zinc-400 leading-relaxed">No new app to learn, no walled-garden
-          platform. It shows up as part of the AI workspace the student
-          already uses for homework help.</p>
+      <div class="panel p-6">
+        <h3 class="text-white font-medium mb-2">Lives where they already study</h3>
+        <p class="text-sm leading-relaxed">No separate app to open, no account for the student to
+          remember. It shows up inside the same AI chat they'd already go to
+          for homework help.</p>
       </div>
-      <div class="card-hover rounded-2xl border border-white/[0.08] bg-[#12151C]/80 backdrop-blur p-8 shadow-xl shadow-black/20">
-        <h3 class="text-white font-semibold mb-2">Private by default</h3>
-        <p class="text-sm text-zinc-400 leading-relaxed">Raw report cards and notes never leave
-          this server - only the derived learner profile and progress updates
-          are ever shared with a connected AI. The link is a private,
-          unguessable URL. Delete a student any time, permanently.</p>
+      <div class="panel p-6">
+        <h3 class="text-white font-medium mb-2">Private by default</h3>
+        <p class="text-sm leading-relaxed">Raw report cards and notes never leave this platform -
+          only the profile and progress derived from them reach a connected
+          AI. Each link is unguessable, and deleting a student removes
+          everything, permanently.</p>
       </div>
     </div>
   </section>
 
   <!-- Demo teaser -->
-  <section class="max-w-4xl mx-auto px-6 py-24 sm:py-32">
-    <a href="/demo" class="card-hover block rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-[#12151C] to-[#0D0F14] p-8 sm:p-10 text-center group shadow-xl shadow-black/20">
-      <span class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-5">
-        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="5 3 19 12 5 21 5 3"/>
-        </svg>
-      </span>
-      <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-3">See a real one, end to end</h2>
-      <p class="text-zinc-400 max-w-xl mx-auto mb-5">Not a mockup - the actual marks, notes, learner
-        profile, a sample tutoring exchange, and the real live link for a student on this platform right now.</p>
-      <span class="inline-flex items-center gap-2 text-sm font-semibold text-emerald-400 group-hover:text-emerald-300">
-        Watch the full walkthrough
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+  <section class="max-w-4xl mx-auto px-6 py-16 border-t border-white/[0.06]">
+    <a href="/demo" class="panel-raised block rounded-2xl p-7 sm:p-9 group hover:border-white/[0.18] transition-colors border border-[var(--border)]">
+      <div class="flex items-start justify-between gap-6 flex-wrap">
+        <div>
+          <p class="font-tech text-xs uppercase tracking-[0.14em] text-emerald-400/80 mb-3">Not a mockup</p>
+          <h2 class="text-xl sm:text-2xl font-semibold text-white mb-2">Walk through a real student, end to end</h2>
+          <p class="text-sm leading-relaxed max-w-lg">The actual marks, the actual notes, the profile
+            built from them, a sample tutoring exchange, and the live link
+            for a student on this platform right now.</p>
+        </div>
+        <span class="icon-badge w-11 h-11 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </span>
+      </div>
+      <span class="link-arrow inline-flex items-center gap-2 text-sm font-semibold text-emerald-400 mt-6">
+        See the walkthrough
+        <span aria-hidden="true">&rarr;</span>
       </span>
     </a>
   </section>
 
-  <!-- CTA band -->
-  <section class="max-w-3xl mx-auto px-6 pb-28">
-    <div class="relative rounded-2xl border border-white/[0.08] bg-gradient-to-b from-[#12151C] to-[#0D0F14] text-center px-8 py-16 overflow-hidden shadow-xl shadow-black/20">
-      <div class="glow absolute inset-x-0 top-0 h-64 -z-10 mx-auto w-96"></div>
-      <h2 class="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-3">
-        Set up a student profile in a few minutes
-      </h2>
-      <p class="text-zinc-400 mb-8">Free to start. No credit card required.</p>
-      <a href="/signup"
-         class="btn-primary inline-block px-6 py-3 rounded-lg text-sm font-semibold text-white bg-gradient-to-b from-emerald-400 to-emerald-600 ring-1 ring-white/20 shadow-lg shadow-emerald-500/20">
-        Get started
-      </a>
-    </div>
+  <!-- CTA -->
+  <section class="relative max-w-4xl mx-auto px-6 py-20 border-t border-white/[0.06] text-center overflow-hidden">
+    <div class="glow absolute top-0 left-1/2 -translate-x-1/2 w-80 h-80 -z-10 opacity-60"></div>
+    <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-white mb-3">Set up a student in a few minutes</h2>
+    <p class="mb-8">Free to start. No credit card.</p>
+    <a href="/signup"
+       class="btn-primary inline-block px-6 py-3 rounded-lg text-sm font-semibold text-zinc-950 bg-emerald-400">
+      Get started
+    </a>
   </section>
 
-  <footer class="max-w-6xl mx-auto px-6 py-10 border-t border-white/[0.08] text-center">
-    <p class="text-sm text-zinc-500">Built to help students learn at their own pace, everywhere they
-      study. Academic data stays private and is never used beyond this student's own profile.</p>
+  <footer class="max-w-6xl mx-auto px-6 py-10 border-t border-white/[0.06] text-center">
+    <p class="text-xs text-zinc-600">Academic data stays private and is never used beyond the
+      student it belongs to.</p>
   </footer>
 
 </body>

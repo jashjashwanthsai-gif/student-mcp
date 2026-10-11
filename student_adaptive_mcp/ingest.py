@@ -5,16 +5,24 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import anthropic
+from dotenv import load_dotenv
 
 from student_adaptive_mcp import config, storage
 from student_adaptive_mcp.chunking import chunk_notes
-from student_adaptive_mcp.profile import LearnerProfile, build_learner_profile, save_profile
+from student_adaptive_mcp.profile import (
+    LearnerProfile,
+    build_learner_profile,
+    build_learner_profile_heuristic,
+    save_profile,
+)
 from student_adaptive_mcp.report_parser import MarkRecord, parse_marks_csv, summarize_marks
+
+load_dotenv()
 
 MAX_NOTES_SAMPLE_CHARS = 6000
 
@@ -60,11 +68,21 @@ def run_ingestion(
     raw_dir: Path | None = None,
     reset: bool = False,
     skip_profile: bool = False,
+    bio_text: str | None = None,
 ) -> IngestionReport:
     """student_name is the storage key (directory/collection name - a UUID for
     multi-tenant use). display_name is the human-readable name shown to the LLM
     in the profiling prompt; defaults to student_name for the single-tenant
-    local CLI flow."""
+    local CLI flow.
+
+    bio_text: pass the webapp's actual Supabase bio_text here - the local CLI
+    flow leaves this None and falls back to the local bio.txt file instead (see
+    below). Without this, ingestion would silently read/create a placeholder
+    local file per student_id and use ITS instructional example text
+    ("e.g. football, gaming, art...") as if it were the real bio - which is
+    wrong for the webapp, where the real bio the user typed lives in Supabase,
+    not on local disk at all.
+    """
     display_name = display_name or student_name
     config.ensure_student_scaffold(student_name)
     raw_dir = raw_dir or config.get_raw_dir(student_name)
@@ -100,14 +118,20 @@ def run_ingestion(
             report.sample_chunks = [c.text for c in chunks[:2]]
 
     if not skip_profile:
-        bio_path = config.get_bio_path(student_name)
-        bio_text = bio_path.read_text(encoding="utf-8") if bio_path.exists() else ""
+        if bio_text is None:
+            bio_path = config.get_bio_path(student_name)
+            bio_text = bio_path.read_text(encoding="utf-8") if bio_path.exists() else ""
         marks_summary = summarize_marks(all_records)
         notes_sample = "\n\n---\n\n".join(notes_texts)[:MAX_NOTES_SAMPLE_CHARS]
 
         if all_records or notes_sample:
-            client = anthropic.Anthropic()
-            profile = build_learner_profile(marks_summary, notes_sample, bio_text, display_name, client)
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                import anthropic
+
+                client = anthropic.Anthropic()
+                profile = build_learner_profile(marks_summary, notes_sample, bio_text, display_name, client)
+            else:
+                profile = build_learner_profile_heuristic(all_records, notes_texts, bio_text, display_name)
             report.profile = profile
             report.profile_built = True
 
@@ -119,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--student", required=True, help="Student name (used for data directory + collection)")
     parser.add_argument("--raw-dir", type=Path, default=None, help="Override raw data directory")
     parser.add_argument("--reset", action="store_true", help="Wipe existing vector store before ingesting")
-    parser.add_argument("--skip-profile", action="store_true", help="Skip the Anthropic call for profile extraction")
+    parser.add_argument("--skip-profile", action="store_true", help="Skip profile extraction entirely (for quick re-testing of parsing/chunking)")
     args = parser.parse_args(argv)
 
     report = run_ingestion(

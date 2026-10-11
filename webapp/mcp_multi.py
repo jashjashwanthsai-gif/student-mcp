@@ -7,21 +7,30 @@ HTTP request via FastMCP's get_http_request(). That's what lets one running
 server process many students at once, each with their own unique
 /mcp/<token> URL.
 
-Unlike persona_mcp's multi-tenant server, ask_tutor DOES call Anthropic
-directly to generate a ready-to-show tutoring reply - a deliberate difference
-from persona's "host model writes the reply" design, not an oversight (see
-student_adaptive_mcp/server.py's module docstring). So this backend needs
-ANTHROPIC_API_KEY in addition to Supabase (accounts/student metadata/profile/
-progress) and Qdrant (notes vector memory).
+ask_tutor's behavior depends on whether ANTHROPIC_API_KEY is set:
+- Set: calls Anthropic directly and returns a ready-to-show tutoring reply
+  (the original design).
+- Unset: returns the same profile/gaps/notes context as DATA instead - no
+  generation happens on this server - and the HOST model (the connected
+  Claude, using its own account) writes the tutoring reply itself, the same
+  "host model writes the reply" design persona_mcp uses for everything. This
+  is what lets the platform demo end-to-end with zero LLM API key; dropping
+  a real key back in upgrades ask_tutor to server-side generation with no
+  code change needed.
+
+So this backend needs Supabase (accounts/student metadata/profile/progress)
+and Qdrant (notes vector memory) always, but ANTHROPIC_API_KEY only to get
+the server-side-generation behavior for ask_tutor and the LLM-based profile
+extraction in student_adaptive_mcp/profile.py - both have a no-key fallback.
 
 Privacy note: raw uploaded files (report cards, notes) never leave this
 server. Only the derived learner profile, notes chunks, and progress updates
 below are ever returned to a connected AI client.
 """
 
+import os
 from datetime import datetime, timezone
 
-import anthropic
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_request
 
@@ -37,15 +46,29 @@ from webapp.db import Student, get_progress_entries, get_student_by_token, log_p
 
 GENERATION_MODEL = "claude-sonnet-5-5"
 
-_anthropic_client = anthropic.Anthropic()
+
+def _make_anthropic_client():
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    import anthropic
+
+    return anthropic.Anthropic()
+
+
+_anthropic_client = _make_anthropic_client()
 
 SERVER_INSTRUCTIONS = """This server gives you a persistent academic profile for a specific real
 student, so you can teach them at their actual level instead of starting from zero every
 conversation. Call `get_student_profile` early in the conversation if you don't already know
 their level/strengths/style. Use `get_knowledge_gaps` to check what they struggle with in a
 subject before explaining it, `get_learning_trajectory` to see how a topic has trended over time
-(not just its current state), `ask_tutor` to get a fully adapted explanation in one call, and
-`recall_notes` for raw supporting context.
+(not just its current state), and `recall_notes` for raw supporting context.
+
+Call `ask_tutor` to teach - it returns EITHER a ready-to-show reply (a string: show it to the
+student as-is) OR a context block to teach from yourself (a dict with `context_for_reply`: in that
+case YOU write the actual tutoring explanation using that context, adapted to the student's
+level/pace/error patterns described in it - do not just relay the dict's fields, and do not mention
+that you received raw context instead of a finished reply).
 
 This server also lets you WRITE progress back, so the student's profile keeps improving across
 sessions - even a session on a different account:
@@ -175,10 +198,12 @@ def recall_notes(query: str, k: int = 5) -> list[str]:
 
 
 @mcp.tool
-def ask_tutor(message: str) -> str:
-    """Send the student's question/message to a tutor that is already fully adapted to their
-    profile (level, pace, style, gaps, interests) and get back a ready-to-show explanation.
-    Returns the final reply - return this text to the student as-is, do not rewrite it yourself.
+def ask_tutor(message: str) -> str | dict:
+    """Send the student's question/message to get an explanation fully adapted to their profile
+    (level, pace, style, gaps, interests). Returns EITHER a string (a ready-to-show reply - show it
+    to the student as-is, do not rewrite it) OR a dict with `context_for_reply` (no server-side
+    generation configured - YOU must write the tutoring explanation yourself using that context,
+    adapted to the student's level/pace/error patterns described in it).
     """
     student = _current_student()
     if student.status != "ready" or not student.profile:
@@ -193,14 +218,17 @@ def ask_tutor(message: str) -> str:
     entries = get_progress_entries(student.id)
     live_knowledge_gaps = summarize_knowledge_gaps_from_entries(entries)
     recurring_errors = recurring_error_notes_from_entries(entries)
-    system_prompt = build_tutor_system_prompt(
+    context = build_tutor_system_prompt(
         student.name, profile, student.bio_text, memory_chunks, live_knowledge_gaps, recurring_errors
     )
+
+    if _anthropic_client is None:
+        return {"student_name": student.name, "context_for_reply": context}
 
     response = _anthropic_client.messages.create(
         model=GENERATION_MODEL,
         max_tokens=1024,
-        system=system_prompt,
+        system=context,
         messages=[{"role": "user", "content": message}],
     )
     return response.content[0].text

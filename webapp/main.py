@@ -177,7 +177,7 @@ def upload_files(
             shutil.copyfileobj(upload.file, f)
 
     db.update_student_status(student_id, "processing", "Queued for processing...")
-    background_tasks.add_task(process_student_upload, student.id, student.name)
+    background_tasks.add_task(process_student_upload, student.id, student.name, student.bio_text)
     return RedirectResponse(f"/students/{student_id}", status_code=303)
 
 

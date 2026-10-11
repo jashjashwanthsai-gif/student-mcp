@@ -5,11 +5,11 @@ from student_adaptive_mcp.profile import profile_to_dict
 from webapp import db
 
 
-def process_student_upload(student_id: str, display_name: str) -> None:
+def process_student_upload(student_id: str, display_name: str, bio_text: str = "") -> None:
     db.update_student_status(student_id, "processing", "Parsing marks/notes and building the learner profile...")
 
     try:
-        report = run_ingestion(student_name=student_id, display_name=display_name, reset=True)
+        report = run_ingestion(student_name=student_id, display_name=display_name, reset=True, bio_text=bio_text)
     except Exception as exc:  # noqa: BLE001 - surface any failure to the dashboard
         db.update_student_status(student_id, "error", f"Ingestion failed: {exc}")
         return
