@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
 from student_adaptive_mcp.chunking import Chunk
 
@@ -124,3 +124,34 @@ def add_memory(collection: StudentCollection, text: str, metadata: dict) -> str:
         points=[PointStruct(id=memory_id, vector=vector, payload={"text": text, **metadata})],
     )
     return memory_id
+
+
+def list_memories_by_type(collection: StudentCollection, memory_type: str, limit: int = 100) -> list[dict]:
+    """Every memory of one `type` (e.g. "session_summary"), newest first - a
+    plain chronological listing, unlike query_memories' similarity search.
+    Qdrant's scroll doesn't support ORDER BY an arbitrary payload field
+    without a payload index, so this sorts client-side by `saved_at`; fine at
+    the per-student collection sizes this app deals with."""
+    client = _get_client()
+    # Filtering on a payload field requires an index on it - unlike vector
+    # similarity search, which needs none. Collections created before this
+    # function existed don't have one yet, so ensure it here rather than only
+    # at collection-creation time; idempotent if it already exists.
+    try:
+        client.create_payload_index(collection.collection_name, field_name="type", field_schema="keyword")
+    except Exception:
+        pass
+    points, _ = client.scroll(
+        collection_name=collection.collection_name,
+        scroll_filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value=memory_type))]),
+        limit=limit,
+        with_payload=True,
+        with_vectors=False,
+    )
+    entries = []
+    for point in points:
+        payload = dict(point.payload or {})
+        text = payload.pop("text", "")
+        entries.append({"text": text, "metadata": payload})
+    entries.sort(key=lambda e: e["metadata"].get("saved_at", ""), reverse=True)
+    return entries

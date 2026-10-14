@@ -27,6 +27,21 @@ from student_adaptive_mcp import config
 STRUGGLE_LEVELS = {"struggling", "weak", "confused"}
 MASTERED_LEVELS = {"mastered"}
 
+# Ordinal position for charting a mastery_level on a shared axis - mastery_level
+# is free text (see update_learning_progress's docstring), so anything that
+# isn't recognized as a struggle or mastery defaults to the middle tier rather
+# than failing; "practicing" lands there naturally too.
+MASTERY_TIERS = ("Struggling", "Practicing", "Mastered")
+
+
+def mastery_ordinal(mastery_level: str) -> int:
+    level = mastery_level.strip().lower()
+    if level in STRUGGLE_LEVELS:
+        return 0
+    if level in MASTERED_LEVELS:
+        return 2
+    return 1
+
 
 @dataclass
 class ProgressEntry:

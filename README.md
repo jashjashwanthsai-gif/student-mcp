@@ -263,7 +263,8 @@ No `render.yaml` here - it's a manual dashboard flow:
 
 1. Push this repo to GitHub, then in Render: **New > Web Service**, connect
    the repo.
-2. Build command: `uv sync`. Start command:
+2. Build command: `pip install uv && uv sync --frozen` (Render's Python
+   runtime doesn't have `uv` preinstalled). Start command:
    `uv run uvicorn webapp.main:app --host 0.0.0.0 --port $PORT`.
 3. Add the env vars from Setup above (`WEBAPP_SECRET_KEY`, `SUPABASE_URL`,
    `SUPABASE_SERVICE_ROLE_KEY`, `QDRANT_URL`, `QDRANT_API_KEY`, and
@@ -281,6 +282,13 @@ No `render.yaml` here - it's a manual dashboard flow:
 - Ingestion runs as a FastAPI background task in-process - fine for an MVP,
   but a large upload will tie up a worker thread; a real job queue would be
   the next step at scale.
+- Render's free tier has no persistent disk, so `fastembed`'s local ONNX
+  embedding model (downloaded on first use) gets re-downloaded on every
+  cold start after a spin-down, not just once - on top of the normal
+  30-60s wake-up delay. A connected AI's first tool call after idle time can
+  be slow enough to feel stuck, or time out depending on the client's own
+  tool-call timeout; calls after that, while the service stays awake, are
+  fast. The paid Starter tier removes spin-down entirely.
 - No billing/usage limits when `ANTHROPIC_API_KEY` is set - it's shared
   across all students and users.
 - The heuristic profile/tutor fallback (no API key) is lower-fidelity by

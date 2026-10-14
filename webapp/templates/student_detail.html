@@ -47,6 +47,20 @@
   {% endif %}
   <code class="font-tech block w-full px-4 py-3 rounded-lg bg-black/40 border border-white/10 text-emerald-300 text-xs break-all">{{ mcp_url }}</code>
 
+  <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-10 mb-3">4. Student login</h3>
+  <p class="text-sm text-zinc-400 mb-3">A separate, read-only login for {{ student.name }} to see their own progress dashboard at <a href="/student-login" class="text-emerald-400 hover:text-emerald-300">/student-login</a> - this can't upload, edit, or delete anything.</p>
+  {% if new_login_password %}
+    <div class="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 mb-3">
+      <p class="text-xs text-amber-400/90 mb-2">Save this password now - it won't be shown again.</p>
+      <div class="flex flex-wrap gap-x-6 gap-y-1 font-tech text-xs">
+        <span class="text-zinc-400">Username: <span class="text-zinc-100">{{ student.login_username }}</span></span>
+        <span class="text-zinc-400">Password: <span class="text-zinc-100">{{ new_login_password }}</span></span>
+      </div>
+    </div>
+  {% else %}
+    <p class="font-tech text-xs text-zinc-400">Username: <span class="text-zinc-200">{{ student.login_username }}</span> &middot; password was shown once, when this student was created.</p>
+  {% endif %}
+
   <h3 class="font-tech text-xs uppercase tracking-wider text-red-400/80 mt-10 mb-3">Danger zone</h3>
   <form method="post" action="/students/{{ student.id }}/delete" onsubmit="return confirm('Delete this student and all their data permanently?');">
     <button type="submit"
