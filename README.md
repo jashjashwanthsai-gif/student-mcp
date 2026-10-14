@@ -5,9 +5,11 @@ grade level, strengths, specific knowledge gaps, and *how* they tend to make
 mistakes - that any MCP-compatible AI (Claude, ChatGPT, etc.) can plug into
 and tutor from immediately, instead of starting from zero every chat. A
 parent, tutor, or teacher uploads report cards/marks + notes once; the
-platform turns that into a learner profile and a private link; from then on,
-every AI conversation that link is pasted into already knows this specific
-student.
+platform turns that into a learner profile and, on the **premium** plan, a
+private live link; from then on, every AI conversation that link is pasted
+into already knows this specific student. The **free** plan gets the same
+profile as a one-time downloadable Claude Skill instead - see "Free vs
+premium" below.
 
 It is not a generic "AI tutor" chatbot - there's no built-in chat UI at all.
 It's the *memory layer* underneath one: a small MCP server that hands a host
@@ -53,6 +55,42 @@ already uses.
    built from the exact same data the connected AI reads and writes. No
    separate login: whoever's already logged in to set this student up is
    the one who sees it.
+
+## Free vs premium
+
+Same signup, same upload flow, same learner-profile extraction - what
+differs is what you get back, and it maps directly onto what actually costs
+money to run:
+
+|  | Free | Premium |
+|---|---|---|
+| Deliverable | A downloadable **Claude Skill** (`SKILL.md` in a `.zip`) | A live **MCP connector** (`/mcp/<token>`) |
+| Works with | Claude only (manually added under Customize → Skills) | Claude, ChatGPT, or any MCP-compatible client |
+| Memory | None - a frozen snapshot from upload time | Grows every session - mastery trends, recurring patterns, remembered facts |
+| Progress dashboard | Not shown (there's nothing to track without a live connector) | Full dashboard on the student's page |
+| Backend cost | One ingestion run, no Qdrant collection, nothing left running | An ongoing Qdrant collection + Supabase rows that grow over time |
+
+Mechanically:
+- `User.plan` (`'free'` or `'premium'`, default `'free'`) gates everything -
+  there's no separate flag per student.
+- Free-tier ingestion runs with `embed_notes=False`
+  (`student_adaptive_mcp/ingest.py`) - marks still get parsed and a profile
+  still gets built, but notes are never chunked/embedded into Qdrant, so no
+  collection is created at all. The full notes text is still kept (in
+  `students.notes_text`) so the Skill can be regenerated on demand.
+- `student_adaptive_mcp/skill.py` builds the Skill's Markdown - the full
+  profile and the full notes text inlined directly, since a Skill has no
+  retrieval step to selectively pull from the way `ask_tutor`/`recall_notes`
+  do for the live connector.
+- The gate is enforced server-side, not just by withholding the UI: every
+  MCP tool call resolves the owner's plan in `_current_student()`
+  (`webapp/mcp_multi.py`) and refuses with a clear message if it isn't
+  `'premium'` - a free-tier student still gets an `mcp_token` (schema
+  consistency), but the connector never actually works for one.
+- **No billing integration yet.** `plan` is flipped by hand in the Supabase
+  SQL Editor (`update users set plan = 'premium' where email = '...';`)
+  until a real upgrade flow exists - there's no in-app payment, and no
+  user-facing "Upgrade" button that implies there is one.
 
 ## This is not a "voice twin" - it's a learning-pattern profile
 
@@ -159,7 +197,8 @@ is a natural next step once this flow is validated.
 
 ## What a connected AI can do
 
-A connected student exposes 8 tools:
+This whole section is premium-only - see "Free vs premium" above. A
+connected student exposes 8 tools:
 
 - `get_student_profile()` - grade level, strengths, baseline weaknesses,
   **recurring error patterns** (how they tend to go wrong, not just where),
@@ -258,10 +297,13 @@ student_adaptive_mcp/  Core library, tenant-agnostic (takes a student_id string)
                         round-trip (profile_to_dict/profile_from_dict) for
                         Supabase's jsonb column
   prompts.py              prompt construction (profile extraction + tutor)
+  skill.py                builds the free-tier Claude Skill's SKILL.md from
+                        the same profile/bio/notes - see "Free vs premium"
   ingest.py               CLI + the function the webapp calls in the background
   server.py               single-tenant stdio MCP server (see below)
 
-Supabase            users, students (metadata, bio, profile, mcp_token),
+Supabase            users (incl. plan), students (metadata, bio, profile,
+                    notes_text, mcp_token),
                     progress_log (one row per update_learning_progress call)
 Qdrant              one collection per student_id - notes/history memory
 ```

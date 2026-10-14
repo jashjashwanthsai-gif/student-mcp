@@ -42,7 +42,7 @@ from student_adaptive_mcp.progress import (
     summarize_trajectory_from_entries,
 )
 from student_adaptive_mcp.prompts import build_tutor_system_prompt
-from webapp.db import Student, get_progress_entries, get_student_by_token, log_progress
+from webapp.db import Student, get_progress_entries, get_student_by_token, get_user_by_id, log_progress
 
 GENERATION_MODEL = "claude-sonnet-5-5"
 
@@ -102,6 +102,17 @@ def _current_student() -> Student:
     student = get_student_by_token(token)
     if student is None:
         raise StudentLookupError("This MCP link is invalid, or the student has been deleted.")
+
+    owner = get_user_by_id(student.owner_id)
+    if owner is None or owner.plan != "premium":
+        # Free-tier students still get a token (schema consistency) but never
+        # a working connector - they get a static downloadable Skill instead
+        # (see student_adaptive_mcp/skill.py). Gated here, not just by
+        # withholding the link, so a found/guessed token can't still work.
+        raise StudentLookupError(
+            "This student is on the free plan, which doesn't include the live MCP connector - "
+            "upgrade to premium to connect this student to Claude/ChatGPT/any MCP client."
+        )
     return student
 
 

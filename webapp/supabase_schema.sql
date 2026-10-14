@@ -7,6 +7,11 @@ create table if not exists users (
   id uuid primary key default gen_random_uuid(),
   email text not null unique,
   password_hash text not null,
+  -- 'free' or 'premium'. Gates whether a student gets a live MCP connector
+  -- (premium) or a static downloadable Claude Skill (free) - see
+  -- webapp/processing.py and webapp/mcp_multi.py's plan check. No billing
+  -- integration yet - this is flipped manually (SQL editor) until there is.
+  plan text not null default 'free',
   created_at timestamptz not null default now()
 );
 
@@ -19,6 +24,10 @@ create table if not exists students (
   status_message text not null default '',
   bio_text text not null default '',
   profile jsonb,
+  -- Full (not truncated-for-prompt) notes text, kept so the free-tier Skill
+  -- can be regenerated on demand without re-reading uploaded files or
+  -- storing them a second time anywhere else.
+  notes_text text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

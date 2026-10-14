@@ -5,13 +5,15 @@ Run:
     uv run uvicorn webapp.main:app --reload
 """
 
+import io
 import os
 import shutil
+import zipfile
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -21,6 +23,7 @@ load_dotenv()
 from student_adaptive_mcp import config, storage
 from student_adaptive_mcp import progress as progress_module
 from student_adaptive_mcp.profile import profile_from_dict
+from student_adaptive_mcp.skill import build_skill_markdown, slugify
 from webapp import db
 from webapp.auth import get_current_user, hash_password, login_user, logout_user, verify_password
 from webapp.dashboard_chart import build_progress_chart
@@ -141,8 +144,11 @@ def student_detail(request: Request, student_id: str):
 
     # Progress dashboard (chart, strengths, session history) lives right here
     # on the owner's own page - no separate login needed, they're already
-    # authenticated as the one person who can see it.
-    if student.status == "ready" and student.profile:
+    # authenticated as the one person who can see it. Free-tier students have
+    # no live connector writing to progress_log/Qdrant, so this would always
+    # be empty for them - skip it rather than show a dashboard that can never
+    # fill in; the template shows an upgrade note instead.
+    if user.plan == "premium" and student.status == "ready" and student.profile:
         profile = profile_from_dict(student.profile)
         entries = db.get_progress_entries(student.id)
         by_topic = progress_module.group_by_topic(entries)
@@ -158,6 +164,36 @@ def student_detail(request: Request, student_id: str):
         )
 
     return templates.TemplateResponse(request, "student_detail.html", context)
+
+
+@app.get("/students/{student_id}/skill.zip")
+def download_skill(request: Request, student_id: str):
+    """Free-tier deliverable: a downloadable Claude Skill built from the same
+    profile/bio/notes a premium student's connector would serve live. Built
+    on demand from what's already stored - nothing generated here is
+    persisted a second time anywhere."""
+    user = get_current_user(request)
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    student = db.get_student(student_id)
+    if student is None or student.owner_id != user.id:
+        return RedirectResponse("/", status_code=303)
+    if student.status != "ready" or not student.profile:
+        return Response("This student isn't ready yet.", status_code=400)
+
+    profile = profile_from_dict(student.profile)
+    markdown = build_skill_markdown(student.name, profile, student.bio_text, student.notes_text)
+    slug = slugify(student.name)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{slug}-learner-profile/SKILL.md", markdown)
+
+    return Response(
+        buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{slug}-learner-profile.zip"'},
+    )
 
 
 @app.post("/students/{student_id}/bio")
@@ -196,7 +232,7 @@ def upload_files(
             shutil.copyfileobj(upload.file, f)
 
     db.update_student_status(student_id, "processing", "Queued for processing...")
-    background_tasks.add_task(process_student_upload, student.id, student.name, student.bio_text)
+    background_tasks.add_task(process_student_upload, student.id, student.name, student.bio_text, user.plan)
     return RedirectResponse(f"/students/{student_id}", status_code=303)
 
 

@@ -37,6 +37,7 @@ class IngestionReport:
     profile_built: bool = False
     profile: LearnerProfile | None = None
     sample_chunks: list[str] | None = None
+    notes_full_text: str = ""
 
 
 def discover_source_files(raw_dir: Path) -> tuple[list[Path], list[Path]]:
@@ -69,6 +70,7 @@ def run_ingestion(
     reset: bool = False,
     skip_profile: bool = False,
     bio_text: str | None = None,
+    embed_notes: bool = True,
 ) -> IngestionReport:
     """student_name is the storage key (directory/collection name - a UUID for
     multi-tenant use). display_name is the human-readable name shown to the LLM
@@ -82,13 +84,22 @@ def run_ingestion(
     ("e.g. football, gaming, art...") as if it were the real bio - which is
     wrong for the webapp, where the real bio the user typed lives in Supabase,
     not on local disk at all.
+
+    embed_notes: False skips chunking/embedding notes into Qdrant entirely
+    (no collection is even created) - used for free-tier students, who get a
+    static downloadable Skill instead of a live connector, so there's no
+    semantic-recall use for a per-student vector store and no reason to pay
+    for one. notes_full_text is still populated either way, since the Skill
+    needs the complete text, not chunked-for-retrieval fragments.
     """
     display_name = display_name or student_name
     config.ensure_student_scaffold(student_name)
     raw_dir = raw_dir or config.get_raw_dir(student_name)
 
     report = IngestionReport()
-    collection = storage.reset_collection(student_name) if reset else storage.get_collection(student_name)
+    collection = None
+    if embed_notes:
+        collection = storage.reset_collection(student_name) if reset else storage.get_collection(student_name)
 
     mark_files, note_files = discover_source_files(raw_dir)
     if not mark_files and not note_files:
@@ -111,11 +122,14 @@ def run_ingestion(
         notes_texts.append(text)
         report.notes_files_parsed += 1
 
-        chunks = chunk_notes(text, source_file=nf.name)
-        storage.add_chunks(collection, chunks)
-        report.chunks_created += len(chunks)
-        if report.sample_chunks is None and chunks:
-            report.sample_chunks = [c.text for c in chunks[:2]]
+        if embed_notes:
+            chunks = chunk_notes(text, source_file=nf.name)
+            storage.add_chunks(collection, chunks)
+            report.chunks_created += len(chunks)
+            if report.sample_chunks is None and chunks:
+                report.sample_chunks = [c.text for c in chunks[:2]]
+
+    report.notes_full_text = "\n\n---\n\n".join(notes_texts)
 
     if not skip_profile:
         if bio_text is None:

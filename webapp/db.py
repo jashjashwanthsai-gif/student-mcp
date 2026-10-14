@@ -31,6 +31,7 @@ class User:
     id: str
     email: str
     password_hash: str
+    plan: str = "free"
     created_at: str | None = None
 
 
@@ -44,12 +45,19 @@ class Student:
     status_message: str = ""
     bio_text: str = ""
     profile: dict | None = None
+    notes_text: str = ""
     created_at: str | None = None
     updated_at: str | None = None
 
 
 def _user_from_row(row: dict) -> User:
-    return User(id=row["id"], email=row["email"], password_hash=row["password_hash"], created_at=row.get("created_at"))
+    return User(
+        id=row["id"],
+        email=row["email"],
+        password_hash=row["password_hash"],
+        plan=row.get("plan") or "free",
+        created_at=row.get("created_at"),
+    )
 
 
 def _student_from_row(row: dict) -> Student:
@@ -62,6 +70,7 @@ def _student_from_row(row: dict) -> Student:
         status_message=row.get("status_message") or "",
         bio_text=row.get("bio_text") or "",
         profile=row.get("profile"),
+        notes_text=row.get("notes_text") or "",
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
     )
@@ -143,6 +152,10 @@ def update_student_bio(student_id: str, bio_text: str) -> None:
 
 def update_student_profile(student_id: str, profile: dict) -> None:
     _get_client().table("students").update({"profile": profile}).eq("id", student_id).execute()
+
+
+def update_student_notes_text(student_id: str, notes_text: str) -> None:
+    _get_client().table("students").update({"notes_text": notes_text}).eq("id", student_id).execute()
 
 
 def delete_student(student_id: str) -> None:

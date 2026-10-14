@@ -40,12 +40,36 @@
   <p class="text-sm text-zinc-500 mt-3">Re-uploading rebuilds the learner profile from everything uploaded so far and adds the new notes to this student's memory - nothing from past sessions or past uploads is erased.</p>
 
   <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-10 mb-3">3. Connect</h3>
-  {% if student.status == "ready" %}
-    <p class="text-sm text-zinc-400 mb-3">Paste this URL into Claude, ChatGPT, or any MCP-compatible client as a remote MCP server. From the next message onward, the AI knows this student's level and teaches at their pace:</p>
+  {% if user.plan == "premium" %}
+    {% if student.status == "ready" %}
+      <p class="text-sm text-zinc-400 mb-3">Paste this URL into Claude, ChatGPT, or any MCP-compatible client as a remote MCP server. From the next message onward, the AI knows this student's level and teaches at their pace:</p>
+    {% else %}
+      <p class="text-sm text-zinc-500 mb-3">The MCP link will work once processing finishes, but here it is already if you want to connect early:</p>
+    {% endif %}
+    <code class="font-tech block w-full px-4 py-3 rounded-lg bg-black/40 border border-white/10 text-emerald-300 text-xs break-all">{{ mcp_url }}</code>
   {% else %}
-    <p class="text-sm text-zinc-500 mb-3">The MCP link will work once processing finishes, but here it is already if you want to connect early:</p>
+    {% if student.status == "ready" %}
+      <p class="text-sm text-zinc-400 mb-3">Free plan: download a Claude Skill built from this profile - a one-time
+        snapshot, not a live connector. In Claude, go to <strong class="text-zinc-200">Settings &rarr; Customize &rarr;
+        Skills</strong> and upload the file below.</p>
+      <a href="/students/{{ student.id }}/skill.zip"
+        class="inline-flex items-center justify-center px-5 py-2.5 rounded-lg text-sm font-semibold text-white bg-gradient-to-b from-emerald-400 to-emerald-600 ring-1 ring-white/20 shadow-lg shadow-emerald-500/10 hover:opacity-90 active:scale-[0.98] transition">
+        Download Skill (.zip)
+      </a>
+      <p class="text-sm text-zinc-500 mt-4">This is a frozen snapshot - it won't remember new sessions, track
+        progress, or update itself. <strong class="text-zinc-300">Upgrade to premium</strong> for a live MCP
+        connector that grows with every session, works in Claude, ChatGPT, or any MCP client, and includes the
+        progress dashboard below.</p>
+    {% else %}
+      <p class="text-sm text-zinc-500 mb-3">The downloadable Skill will be ready once processing finishes.</p>
+    {% endif %}
   {% endif %}
-  <code class="font-tech block w-full px-4 py-3 rounded-lg bg-black/40 border border-white/10 text-emerald-300 text-xs break-all">{{ mcp_url }}</code>
+
+  {% if user.plan != "premium" %}
+  <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-10 mb-3">Progress</h3>
+  <p class="text-sm text-zinc-600">Progress tracking and the dashboard (strengths, recurring patterns, a chart of
+    mastery over time, session history) need the live connector - they're part of the premium plan.</p>
+  {% endif %}
 
   {% if chart is defined %}
   <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-10 mb-3">Progress</h3>
