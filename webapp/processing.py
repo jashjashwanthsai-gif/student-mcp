@@ -1,4 +1,12 @@
-"""Background ingestion job triggered after a student's files are uploaded."""
+"""Background ingestion job triggered after a student's files are uploaded.
+
+reset=False (not the ingest.py CLI default) - a re-upload should grow this
+student's memory, not wipe it. Qdrant points from notes are keyed off
+(source_file, chunk_index), so re-uploading the same file just overwrites its
+own chunks in place; a new/differently-named file adds alongside everything
+already there, including every live-session fact/summary saved via the
+`remember`/`save_session_summary` MCP tools, which this must never touch.
+"""
 
 from student_adaptive_mcp.ingest import run_ingestion
 from student_adaptive_mcp.profile import profile_to_dict
@@ -9,7 +17,7 @@ def process_student_upload(student_id: str, display_name: str, bio_text: str = "
     db.update_student_status(student_id, "processing", "Parsing marks/notes and building the learner profile...")
 
     try:
-        report = run_ingestion(student_name=student_id, display_name=display_name, reset=True, bio_text=bio_text)
+        report = run_ingestion(student_name=student_id, display_name=display_name, reset=False, bio_text=bio_text)
     except Exception as exc:  # noqa: BLE001 - surface any failure to the dashboard
         db.update_student_status(student_id, "error", f"Ingestion failed: {exc}")
         return
