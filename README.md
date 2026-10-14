@@ -23,6 +23,10 @@ already uses.
 2. **Upload what you have.** A marks CSV (report card scores across terms)
    and/or free-text notes (teacher remarks, syllabus excerpts). No special
    formatting beyond the CSV columns below - plain `.txt`/`.md` for notes.
+   Upload again anytime a new marksheet or report comes in - this rebuilds
+   the learner profile from everything uploaded so far and *adds* the new
+   notes to the student's memory. Nothing from past uploads or past
+   tutoring sessions is ever wiped by a later upload.
 3. **The platform builds a learner profile.** In the background: marks get
    parsed and summarized per subject, notes get chunked and embedded into a
    private per-student vector store (Qdrant), and one LLM call turns all of
@@ -43,6 +47,12 @@ already uses.
    smarter than the last one - and it persists across a deleted chat or a
    switch to a brand-new account, because it lives on this platform, not in
    the chat history.
+7. **The parent/tutor/teacher can see it too.** The same student page shows
+   a progress dashboard - strengths, current focus, recurring patterns, a
+   chart of mastery per topic over time, and the session-history timeline -
+   built from the exact same data the connected AI reads and writes. No
+   separate login: whoever's already logged in to set this student up is
+   the one who sees it.
 
 ## This is not a "voice twin" - it's a learning-pattern profile
 
@@ -181,6 +191,29 @@ ChatGPT account, as long as the same `/mcp/<token>` link is used.
 firing depends on the host model honoring the server's instructions, not a
 guaranteed hook - a strong nudge, not a guarantee.
 
+## The progress dashboard
+
+Every student's page (`/students/<id>`) also renders a read-only dashboard
+once the profile is `ready` - no second login, this is just part of the
+page the owner already has:
+
+- **Strengths** and **current focus** - the baseline profile's strengths,
+  merged with live knowledge gaps and recommended focus topics
+- **Patterns worth knowing about** - baseline error patterns plus any note
+  that's recurred across multiple `update_learning_progress` calls (a real
+  mistake pattern, not a one-off)
+- **Progress over time** - an SVG chart (built server-side, no JS
+  framework) tracing each topic's mastery trend - `struggling → practicing
+  → mastered`, regressions visible - across a shared timeline, colored per
+  topic with a legend and hover tooltips
+- **Session history** - every `save_session_summary`, newest first, pulled
+  from Qdrant via a payload-filtered scroll (`storage.list_memories_by_type`)
+  rather than the usual similarity search, since this needs *everything* of
+  one type in order, not a relevance-ranked subset
+
+All of it is empty-state-safe: a freshly created student shows "no progress
+logged yet" / "no session summaries saved yet" instead of a blank chart.
+
 ## Privacy
 
 Raw uploaded files (report cards, notes) never leave this server and are
@@ -197,9 +230,13 @@ webapp/            FastAPI app: signup/login, student dashboard, upload
   db.py              Supabase-backed User/Student (accounts + metadata + token)
                       and the progress_log table (mastery trend)
   auth.py            password hashing, session cookies
-  processing.py      background ingestion job (runs student_adaptive_mcp.ingest)
+  processing.py      background ingestion job (runs student_adaptive_mcp.ingest,
+                      always non-destructively - see "How it works" step 2)
   mcp_multi.py        multi-tenant FastMCP app - resolves student per-request
                       from the {token} path segment via get_http_request()
+  dashboard_chart.py  builds the progress-over-time chart's SVG geometry
+                      server-side for student_detail.html - see "The progress
+                      dashboard" above
   supabase_schema.sql  run once in the Supabase SQL Editor
   templates/          server-rendered Jinja2 pages
 
@@ -207,7 +244,10 @@ student_adaptive_mcp/  Core library, tenant-agnostic (takes a student_id string)
   report_parser.py    marks CSV parsing + per-subject summarization
   chunking.py          paragraph-based notes chunking
   storage.py            Qdrant vector store, fastembed local embeddings -
-                        used for semantic recall of notes/history only
+                        used for semantic recall of notes/history
+                        (query_memories) and, separately, a chronological
+                        listing by type (list_memories_by_type) for the
+                        dashboard's session-history timeline
   progress.py            ProgressEntry + pure trend/gaps/recurring-error
                         functions over a list of entries (`*_from_entries`),
                         the trend/pattern tracking that `storage.py` is NOT
@@ -303,7 +343,7 @@ No `render.yaml` here - it's a manual dashboard flow:
   `remember`/`save_session_summary`, and `get_knowledge_gaps`/
   `get_learning_trajectory` merge both - but the baseline profile itself
   doesn't silently rewrite itself from those updates.
-- Not deployed anywhere yet - runs locally via `uvicorn`. Deploying needs a
-  real `WEBAPP_SECRET_KEY`, HTTPS (most MCP clients require it for remote
-  servers), and your own Supabase project + Qdrant cluster (see Setup and
-  Deploy to Render above) - no persistent local disk is needed anymore.
+- Deploying needs a real `WEBAPP_SECRET_KEY`, HTTPS (most MCP clients require
+  it for remote servers), and your own Supabase project + Qdrant cluster
+  (see Setup and Deploy to Render above) - no persistent local disk is
+  needed anymore.
