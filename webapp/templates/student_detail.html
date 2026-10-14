@@ -47,18 +47,78 @@
   {% endif %}
   <code class="font-tech block w-full px-4 py-3 rounded-lg bg-black/40 border border-white/10 text-emerald-300 text-xs break-all">{{ mcp_url }}</code>
 
-  <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-10 mb-3">4. Student login</h3>
-  <p class="text-sm text-zinc-400 mb-3">A separate, read-only login for {{ student.name }} to see their own progress dashboard at <a href="/student-login" class="text-emerald-400 hover:text-emerald-300">/student-login</a> - this can't upload, edit, or delete anything.</p>
-  {% if new_login_password %}
-    <div class="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 mb-3">
-      <p class="text-xs text-amber-400/90 mb-2">Save this password now - it won't be shown again.</p>
-      <div class="flex flex-wrap gap-x-6 gap-y-1 font-tech text-xs">
-        <span class="text-zinc-400">Username: <span class="text-zinc-100">{{ student.login_username }}</span></span>
-        <span class="text-zinc-400">Password: <span class="text-zinc-100">{{ new_login_password }}</span></span>
-      </div>
+  {% if chart is defined %}
+  <h3 class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-10 mb-3">Progress</h3>
+
+  <div class="grid sm:grid-cols-2 gap-5 mb-5">
+    <div>
+      <p class="font-tech text-xs uppercase tracking-wider text-emerald-400/80 mb-2">Strengths</p>
+      {% if profile.strengths %}
+        <ul class="space-y-1 text-sm text-zinc-300">{% for s in profile.strengths %}<li>&bull; {{ s }}</li>{% endfor %}</ul>
+      {% else %}
+        <p class="text-sm text-zinc-600">Nothing recorded yet.</p>
+      {% endif %}
+    </div>
+    <div>
+      <p class="font-tech text-xs uppercase tracking-wider text-amber-400/80 mb-2">Current focus</p>
+      {% set focus_items = knowledge_gaps + profile.recommended_focus_topics %}
+      {% if focus_items %}
+        <ul class="space-y-1 text-sm text-zinc-300">{% for item in focus_items[:6] %}<li>&bull; {{ item }}</li>{% endfor %}</ul>
+      {% else %}
+        <p class="text-sm text-zinc-600">Nothing flagged right now.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% set patterns = profile.error_patterns + recurring_notes %}
+  {% if patterns %}
+  <p class="font-tech text-xs uppercase tracking-wider text-zinc-500 mb-2">Patterns worth knowing about</p>
+  <ul class="space-y-1 text-sm text-zinc-300 mb-5">{% for p in patterns %}<li>&bull; {{ p }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  <p class="font-tech text-xs uppercase tracking-wider text-zinc-500 mb-2">Progress over time</p>
+  {% if chart %}
+    <p class="text-xs text-zinc-600 mb-3">{{ chart.start_date_label }}{% if chart.end_date_label %} &ndash; {{ chart.end_date_label }}{% endif %}</p>
+    <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" class="w-full h-auto" role="img" aria-label="Mastery level per topic over time">
+      {% for label, y in chart.tier_labels %}
+        <line x1="96" y1="{{ y }}" x2="{{ chart.width - 108 }}" y2="{{ y }}" stroke="#2c2c2a" stroke-width="1" stroke-dasharray="3,4"></line>
+        <text x="88" y="{{ y + 4 }}" text-anchor="end" class="font-tech" font-size="10" fill="#898781">{{ label }}</text>
+      {% endfor %}
+      {% for s in chart.series %}
+        <polyline points="{{ s.polyline }}" fill="none" stroke="{{ s.color }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+        {% for p in s.points %}
+          <circle cx="{{ p.x }}" cy="{{ p.y }}" r="4.5" fill="{{ s.color }}" stroke="#12151C" stroke-width="1.5">
+            <title>{{ s.topic }} &middot; {{ p.date_label }} &middot; {{ p.mastery_level }}{% if p.notes %} &middot; {{ p.notes }}{% endif %}</title>
+          </circle>
+        {% endfor %}
+        <text x="{{ chart.width - 104 }}" y="{{ s.label_y + 4 }}" font-size="11" font-weight="600" fill="{{ s.color }}">{{ s.topic }}</text>
+      {% endfor %}
+    </svg>
+    {% if chart.series|length >= 2 %}
+    <div class="flex flex-wrap gap-x-5 gap-y-2 mt-3 pt-3 border-t border-white/[0.06]">
+      {% for s in chart.series %}
+        <span class="inline-flex items-center gap-2 text-xs text-zinc-400"><span class="w-2.5 h-2.5 rounded-full" style="background-color: {{ s.color }}"></span>{{ s.topic }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if chart.overflow_count %}<p class="text-xs text-zinc-600 mt-2">+{{ chart.overflow_count }} more topic(s) not shown.</p>{% endif %}
+  {% else %}
+    <p class="text-sm text-zinc-600 mb-5">No progress logged yet - this fills in once tutoring sessions happen.</p>
+  {% endif %}
+
+  <p class="font-tech text-xs uppercase tracking-wider text-zinc-500 mt-6 mb-2">Session history</p>
+  {% if session_summaries %}
+    <div class="space-y-3">
+      {% for s in session_summaries %}
+        <div class="pl-3 border-l-2 border-white/10">
+          <p class="text-xs text-zinc-600 mb-0.5">{{ s.metadata.get('saved_at', '')[:10] }}</p>
+          <p class="text-sm text-zinc-300 leading-relaxed">{{ s.text }}</p>
+        </div>
+      {% endfor %}
     </div>
   {% else %}
-    <p class="font-tech text-xs text-zinc-400">Username: <span class="text-zinc-200">{{ student.login_username }}</span> &middot; password was shown once, when this student was created.</p>
+    <p class="text-sm text-zinc-600">No session summaries saved yet.</p>
+  {% endif %}
   {% endif %}
 
   <h3 class="font-tech text-xs uppercase tracking-wider text-red-400/80 mt-10 mb-3">Danger zone</h3>

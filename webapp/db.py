@@ -9,33 +9,12 @@ redeploy or free-tier spin-down.
 """
 
 import os
-import re
 import secrets
 from dataclasses import dataclass
 
-import bcrypt
-from postgrest.exceptions import APIError
 from supabase import Client, create_client
 
 from student_adaptive_mcp.progress import ProgressEntry
-
-UNIQUE_VIOLATION = "23505"
-
-# Password hashing lives here (rather than webapp/auth.py) so both owner
-# accounts and student logins below can share it without a circular import -
-# auth.py already imports User/Student from this module.
-
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    try:
-        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
-    except ValueError:
-        return False
-
 
 _client: Client | None = None
 
@@ -65,8 +44,6 @@ class Student:
     status_message: str = ""
     bio_text: str = ""
     profile: dict | None = None
-    login_username: str = ""
-    login_password_hash: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -85,8 +62,6 @@ def _student_from_row(row: dict) -> Student:
         status_message=row.get("status_message") or "",
         bio_text=row.get("bio_text") or "",
         profile=row.get("profile"),
-        login_username=row.get("login_username") or "",
-        login_password_hash=row.get("login_password_hash"),
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
     )
@@ -122,53 +97,16 @@ def get_user_by_id(user_id: str) -> User | None:
 
 # --- Students ------------------------------------------------------------
 
-_USERNAME_SLUG_RE = re.compile(r"[^a-z0-9]+")
-_CREATE_STUDENT_MAX_ATTEMPTS = 5
 
-
-def _slugify_username_base(name: str) -> str:
-    slug = _USERNAME_SLUG_RE.sub("-", name.strip().lower()).strip("-")
-    return slug or "student"
-
-
-def create_student(owner_id: str, name: str) -> tuple[Student, str]:
-    """Creates the student row AND its separate dashboard login in the same
-    call - login_username must be globally unique across the whole platform
-    (login is by username alone, not scoped to an owner), so this retries
-    with a fresh random suffix on the rare collision. Returns the plaintext
-    password alongside the Student: it's only ever available this once, the
-    row stores just its bcrypt hash from here on - the caller is responsible
-    for showing it to the owner immediately."""
+def create_student(owner_id: str, name: str) -> Student:
     token = secrets.token_hex(32)
-    username_base = _slugify_username_base(name)
-    plaintext_password = secrets.token_urlsafe(9)
-    password_hash = hash_password(plaintext_password)
-
-    last_error: APIError | None = None
-    for _ in range(_CREATE_STUDENT_MAX_ATTEMPTS):
-        username = f"{username_base}-{secrets.token_hex(3)}"
-        try:
-            result = (
-                _get_client()
-                .table("students")
-                .insert(
-                    {
-                        "owner_id": owner_id,
-                        "name": name,
-                        "mcp_token": token,
-                        "status": "created",
-                        "login_username": username,
-                        "login_password_hash": password_hash,
-                    }
-                )
-                .execute()
-            )
-            return _student_from_row(result.data[0]), plaintext_password
-        except APIError as exc:
-            if exc.code != UNIQUE_VIOLATION:
-                raise
-            last_error = exc
-    raise last_error
+    result = (
+        _get_client()
+        .table("students")
+        .insert({"owner_id": owner_id, "name": name, "mcp_token": token, "status": "created"})
+        .execute()
+    )
+    return _student_from_row(result.data[0])
 
 
 def get_student(student_id: str) -> Student | None:
@@ -178,11 +116,6 @@ def get_student(student_id: str) -> Student | None:
 
 def get_student_by_token(token: str) -> Student | None:
     result = _get_client().table("students").select("*").eq("mcp_token", token).limit(1).execute()
-    return _student_from_row(result.data[0]) if result.data else None
-
-
-def get_student_by_login_username(username: str) -> Student | None:
-    result = _get_client().table("students").select("*").eq("login_username", username).limit(1).execute()
     return _student_from_row(result.data[0]) if result.data else None
 
 

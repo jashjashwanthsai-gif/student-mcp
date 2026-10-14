@@ -19,19 +19,12 @@ create table if not exists students (
   status_message text not null default '',
   bio_text text not null default '',
   profile jsonb,
-  -- A second, separate login for the student themself (or whoever uses the
-  -- tutor) to view a read-only progress dashboard - distinct from the owner
-  -- account above, which can upload/delete/manage. Generated automatically
-  -- the moment a student is created (see webapp/db.py's create_student).
-  login_username text unique,
-  login_password_hash text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists idx_students_owner on students(owner_id);
 create index if not exists idx_students_token on students(mcp_token);
-create index if not exists idx_students_login_username on students(login_username);
 
 -- Structured, append-only mastery log (one row per update_learning_progress
 -- call) - the trend/pattern tracking that the Qdrant vector store is NOT used
